@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manajer Titik Isolasi Listrik</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        #canvas-container {
+            cursor: grab;
+        }
+        #canvas-container:active {
+            cursor: grabbing;
+        }
+        canvas {
+            border-radius: 0.5rem;
+        }
+        .marker {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: transform 0.2s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            border: 2px solid white;
+            /* Mencegah marker menangkap event mouse untuk panning */
+            pointer-events: auto; 
+        }
+        .marker:hover {
+            transform: scale(1.2);
+        }
+        .marker-context-menu {
+            display: none;
+            position: absolute;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 1000;
+            padding: 8px;
+        }
+        .marker-context-menu button {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            text-align: left;
+            background: none;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .marker-context-menu button:hover {
+            background-color: #f0f0f0;
+        }
+        .control-btn {
+            @apply p-2 bg-gray-200 rounded-md hover:bg-gray-300 transition-colors;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Manajer Titik Isolasi Listrik</h1>
+            <p class="text-gray-600 mt-2">Unggah, tandai, dan kelola SLD Anda dengan kontrol tampilan penuh.</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Kolom Kiri: Kontrol dan Daftar Titik Isolasi -->
+            <div class="lg:col-span-1 bg-white p-6 rounded-lg shadow-md flex flex-col">
+                <div class="mb-6">
+                    <label for="sld-upload" class="block text-lg font-semibold mb-2 text-gray-700">1. Unggah SLD</label>
+                    <input type="file" id="sld-upload" accept="image/*,application/pdf" class="block w-full text-sm text-gray-500
+                        file:mr-4 file:py-2 file:px-4
+                        file:rounded-full file:border-0
+                        file:text-sm file:font-semibold
+                        file:bg-blue-50 file:text-blue-700
+                        hover:file:bg-blue-100
+                    ">
+                </div>
+                
+                <!-- Kontrol Tampilan -->
+                <div id="view-controls" class="hidden mb-6 p-4 bg-gray-50 rounded-lg">
+                    <label class="block text-md font-semibold mb-3 text-gray-700">Kontrol Tampilan</label>
+                    <div class="grid grid-cols-5 gap-2 text-center">
+                        <button id="zoom-in-btn" class="control-btn" title="Perbesar">➕</button>
+                        <button id="zoom-out-btn" class="control-btn" title="Perkecil">➖</button>
+                        <button id="rotate-left-btn" class="control-btn" title="Putar Kiri">↪️</button>
+                        <button id="rotate-right-btn" class="control-btn" title="Putar Kanan">↩️</button>
+                        <button id="reset-view-btn" class="control-btn" title="Reset Tampilan">🔄</button>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <button id="save-jpg-btn" class="hidden w-full px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500 transition-all">
+                        Simpan sebagai JPG
+                    </button>
+                </div>
+
+                <div id="isolation-points-section" class="hidden flex-grow flex flex-col min-h-0">
+                    <h2 class="text-lg font-semibold mb-4 text-gray-700">2. Daftar Titik Isolasi</h2>
+                    <p class="text-sm text-gray-500 mb-4">Klik kanan pada gambar untuk menambahkan titik. Klik kiri pada titik untuk detail.</p>
+                    <div id="points-list" class="space-y-3 flex-grow overflow-y-auto pr-2">
+                        <!-- Daftar titik isolasi akan muncul di sini -->
+                    </div>
+                </div>
+                 <div id="no-points-message" class="hidden text-center py-8 px-4 border-2 border-dashed rounded-lg">
+                    <p class="text-gray-500">Belum ada titik isolasi. <br>Klik kanan pada gambar untuk memulai.</p>
+                </div>
+            </div>
+
+            <!-- Kolom Kanan: Tampilan SLD -->
+            <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                 <div id="canvas-container" class="relative w-full h-[600px] bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden">
+                    <canvas id="sld-canvas"></canvas>
+                    <div id="marker-container" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
+                    <p id="canvas-placeholder" class="text-gray-500">Pratinjau SLD akan muncul di sini</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal untuk Detail Titik Isolasi -->
+    <div id="point-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md m-4">
+            <h2 class="text-2xl font-bold mb-4" id="modal-title">Detail Titik Isolasi</h2>
+            <form id="point-form">
+                <input type="hidden" id="point-id">
+                <div class="mb-4">
+                    <label for="point-name" class="block text-sm font-medium text-gray-700">Nama/Deskripsi</label>
+                    <input type="text" id="point-name" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" placeholder="Contoh: CB-01 Feeder A" required>
+                </div>
+                <div class="mb-6">
+                    <label for="point-status" class="block text-sm font-medium text-gray-700">Status</label>
+                    <select id="point-status" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                        <option value="isolated">Isolated (Terisolasi)</option>
+                        <option value="de-isolated">De-isolated (Normal)</option>
+                    </select>
+                </div>
+                <div class="flex justify-end space-x-4">
+                    <button type="button" id="delete-point-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Hapus</button>
+                    <button type="button" id="close-modal-btn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 focus:outline-none">Batal</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">Simpan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Menu Konteks untuk Marker -->
+    <div id="marker-context-menu" class="marker-context-menu">
+        <button id="add-point-menu-btn">Tambah Titik Isolasi</button>
+    </div>
+
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+
+        const sldUpload = document.getElementById('sld-upload');
+        const saveJpgBtn = document.getElementById('save-jpg-btn');
+        const canvasContainer = document.getElementById('canvas-container');
+        const canvas = document.getElementById('sld-canvas');
+        const ctx = canvas.getContext('2d');
+        const canvasPlaceholder = document.getElementById('canvas-placeholder');
+        const isolationPointsSection = document.getElementById('isolation-points-section');
+        const noPointsMessage = document.getElementById('no-points-message');
+        const pointsList = document.getElementById('points-list');
+        const markerContainer = document.getElementById('marker-container');
+        const pointModal = document.getElementById('point-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const pointForm = document.getElementById('point-form');
+        const pointIdInput = document.getElementById('point-id');
+        const pointNameInput = document.getElementById('point-name');
+        const pointStatusInput = document.getElementById('point-status');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        const deletePointBtn = document.getElementById('delete-point-btn');
+        const contextMenu = document.getElementById('marker-context-menu');
+        const addPointMenuBtn = document.getElementById('add-point-menu-btn');
+        
+        // Kontrol Tampilan
+        const viewControls = document.getElementById('view-controls');
+        const zoomInBtn = document.getElementById('zoom-in-btn');
+        const zoomOutBtn = document.getElementById('zoom-out-btn');
+        const rotateLeftBtn = document.getElementById('rotate-left-btn');
+        const rotateRightBtn = document.getElementById('rotate-right-btn');
+        const resetViewBtn = document.getElementById('reset-view-btn');
+
+        // State Aplikasi
+        let isolationPoints = [];
+        let image = null;
+        let currentContextMenuPos = { x: 0, y: 0 };
+
+        // State Transformasi
+        let scale = 1.0;
+        let rotation = 0;
+        let panOffset = { x: 0, y: 0 };
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+        
+        let imageDrawConfig = { x: 0, y: 0, width: 0, height: 0 };
+
+        function redrawAll() {
+            if (!image) return;
+
+            canvas.width = canvasContainer.clientWidth;
+            canvas.height = canvasContainer.clientHeight;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+
+            // Pindah ke tengah canvas untuk pivot
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            // Terapkan pan
+            ctx.translate(panOffset.x, panOffset.y);
+            // Terapkan rotasi
+            ctx.rotate(rotation * Math.PI / 180);
+            // Terapkan zoom
+            ctx.scale(scale, scale);
+
+            // Hitung dimensi gambar agar pas di canvas (aspect ratio)
+            const imageAspectRatio = image.width / image.height;
+            const canvasAspectRatio = canvas.width / canvas.height;
+            let drawWidth = image.width;
+            let drawHeight = image.height;
+            
+            // Gambar di tengah pivot
+            ctx.drawImage(image, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+            
+            ctx.restore();
+            
+            updateMarkers();
+            updatePointsList();
+        }
+
+        function getTransformedPoint(relativeX, relativeY) {
+            // 1. Dapatkan koordinat absolut pada gambar asli
+            let x = relativeX * image.width - image.width / 2;
+            let y = relativeY * image.height - image.height / 2;
+
+            // 2. Terapkan skala
+            x *= scale;
+            y *= scale;
+
+            // 3. Terapkan rotasi
+            const rad = rotation * Math.PI / 180;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+            const rotatedX = x * cos - y * sin;
+            const rotatedY = x * sin + y * cos;
+
+            // 4. Terapkan pan dan translasi ke tengah canvas
+            const finalX = rotatedX + panOffset.x + canvas.width / 2;
+            const finalY = rotatedY + panOffset.y + canvas.height / 2;
+
+            return { x: finalX, y: finalY };
+        }
+
+        function getInverseTransformedPoint(screenX, screenY) {
+            // 1. Hapus translasi tengah canvas dan pan
+            let x = screenX - canvas.width / 2 - panOffset.x;
+            let y = screenY - canvas.height / 2 - panOffset.y;
+
+            // 2. Terapkan rotasi terbalik
+            const rad = -rotation * Math.PI / 180;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+            const unrotatedX = x * cos - y * sin;
+            const unrotatedY = x * sin + y * cos;
+
+            // 3. Terapkan skala terbalik
+            const unscaledX = unrotatedX / scale;
+            const unscaledY = unrotatedY / scale;
+
+            // 4. Ubah kembali ke koordinat pojok kiri atas gambar dan konversi ke relatif
+            const finalX = unscaledX + image.width / 2;
+            const finalY = unscaledY + image.height / 2;
+            
+            const relativeX = finalX / image.width;
+            const relativeY = finalY / image.height;
+
+            return { x: relativeX, y: relativeY };
+        }
+
+        sldUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            isolationPoints = [];
+            image = null;
+            saveJpgBtn.classList.add('hidden');
+            viewControls.classList.add('hidden');
+            resetView();
+
+            if (file.type.startsWith('image/')) handleImageUpload(file);
+            else if (file.type === 'application/pdf') handlePdfUpload(file);
+            else alert('Format file tidak didukung. Silakan unggah gambar atau PDF.');
+        });
+
+        function handleImageUpload(file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                image = new Image();
+                image.onload = () => {
+                    setupUIForDrawing();
+                    redrawAll();
+                };
+                image.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function handlePdfUpload(file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                pdfjsLib.getDocument({ data: event.target.result }).promise.then(pdf => pdf.getPage(1))
+                .then(page => {
+                    const desiredWidth = 2000; // Render PDF dengan resolusi tinggi
+                    const viewport = page.getViewport({ scale: 1 });
+                    const scale = desiredWidth / viewport.width;
+                    const scaledViewport = page.getViewport({ scale });
+
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.height = scaledViewport.height;
+                    tempCanvas.width = scaledViewport.width;
+                    const tempCtx = tempCanvas.getContext('2d');
+
+                    page.render({ canvasContext: tempCtx, viewport: scaledViewport }).promise.then(() => {
+                        image = new Image();
+                        image.onload = () => {
+                           setupUIForDrawing();
+                           redrawAll();
+                        };
+                        image.src = tempCanvas.toDataURL();
+                    });
+                }).catch(err => alert('Gagal memuat file PDF.'));
+            };
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function setupUIForDrawing() {
+            canvasPlaceholder.style.display = 'none';
+            isolationPointsSection.classList.remove('hidden');
+            noPointsMessage.classList.remove('hidden');
+            saveJpgBtn.classList.remove('hidden');
+            viewControls.classList.remove('hidden');
+        }
+        
+        window.addEventListener('resize', redrawAll);
+
+        function updatePointsList() {
+            pointsList.innerHTML = '';
+            if (isolationPoints.length === 0) {
+                noPointsMessage.classList.remove('hidden');
+                return;
+            }
+            noPointsMessage.classList.add('hidden');
+
+            isolationPoints.forEach(point => {
+                const statusColor = point.status === 'isolated' ? 'bg-red-500' : 'bg-green-500';
+                const statusText = point.status === 'isolated' ? 'Terisolasi' : 'Normal';
+
+                const listItem = document.createElement('div');
+                listItem.className = 'p-3 bg-gray-50 rounded-lg border flex items-center justify-between cursor-pointer hover:bg-gray-100';
+                listItem.dataset.id = point.id;
+                listItem.innerHTML = `
+                    <div>
+                        <p class="font-semibold text-gray-800">${point.name}</p>
+                        <p class="text-sm text-gray-500">ID: ${point.id}</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs font-medium px-2 py-1 rounded-full text-white ${statusColor}">${statusText}</span>
+                    </div>
+                `;
+                listItem.addEventListener('click', () => openModal(point.id));
+                pointsList.appendChild(listItem);
+            });
+        }
+
+        function updateMarkers() {
+            markerContainer.innerHTML = '';
+            if (!image) return;
+
+            isolationPoints.forEach(point => {
+                const pos = getTransformedPoint(point.x, point.y);
+                
+                const marker = document.createElement('div');
+                marker.className = 'marker';
+                marker.dataset.id = point.id;
+                
+                const markerColor = point.status === 'isolated' ? 'bg-red-600' : 'bg-green-600';
+                marker.classList.add(markerColor);
+
+                marker.style.left = `${pos.x - 12}px`;
+                marker.style.top = `${pos.y - 12}px`;
+                marker.textContent = point.id;
+
+                marker.addEventListener('click', (e) => {
+                    e.stopPropagation(); // Mencegah panning saat marker diklik
+                    openModal(point.id);
+                });
+                markerContainer.appendChild(marker);
+            });
+        }
+        
+        function openModal(id = null) {
+            contextMenu.style.display = 'none';
+            if (id) {
+                const point = isolationPoints.find(p => p.id === id);
+                if (!point) return;
+                modalTitle.textContent = `Edit Titik Isolasi #${id}`;
+                pointIdInput.value = point.id;
+                pointNameInput.value = point.name;
+                pointStatusInput.value = point.status;
+                deletePointBtn.classList.remove('hidden');
+            } else {
+                const newId = isolationPoints.length > 0 ? Math.max(...isolationPoints.map(p => p.id)) + 1 : 1;
+                modalTitle.textContent = 'Tambah Titik Isolasi Baru';
+                pointIdInput.value = newId;
+                pointNameInput.value = `Titik ${newId}`;
+                pointStatusInput.value = 'isolated';
+                deletePointBtn.classList.add('hidden');
+            }
+            pointModal.classList.remove('hidden');
+            pointNameInput.focus();
+        }
+
+        function closeModal() {
+            pointModal.classList.add('hidden');
+            pointForm.reset();
+        }
+
+        closeModalBtn.addEventListener('click', closeModal);
+        pointModal.addEventListener('click', (e) => e.target === pointModal && closeModal());
+
+        pointForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const id = parseInt(pointIdInput.value);
+            const name = pointNameInput.value;
+            const status = pointStatusInput.value;
+
+            const existingPointIndex = isolationPoints.findIndex(p => p.id === id);
+
+            if (existingPointIndex > -1) {
+                isolationPoints[existingPointIndex] = { ...isolationPoints[existingPointIndex], name, status };
+            } else {
+                isolationPoints.push({
+                    id, name, status,
+                    x: currentContextMenuPos.x,
+                    y: currentContextMenuPos.y,
+                });
+            }
+            redrawAll();
+            closeModal();
+        });
+        
+        deletePointBtn.addEventListener('click', () => {
+            const id = parseInt(pointIdInput.value);
+            if (window.confirm(`Apakah Anda yakin ingin menghapus Titik Isolasi #${id}?`)) {
+                isolationPoints = isolationPoints.filter(p => p.id !== id);
+                redrawAll();
+                closeModal();
+            }
+        });
+
+        canvasContainer.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (!image) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const screenX = e.clientX - rect.left;
+            const screenY = e.clientY - rect.top;
+
+            const inversePos = getInverseTransformedPoint(screenX, screenY);
+            
+            // Hanya tampilkan menu jika di dalam area gambar
+            if (inversePos.x >= 0 && inversePos.x <= 1 && inversePos.y >= 0 && inversePos.y <= 1) {
+                currentContextMenuPos = inversePos;
+                contextMenu.style.top = `${e.pageY}px`;
+                contextMenu.style.left = `${e.pageX}px`;
+                contextMenu.style.display = 'block';
+            }
+        });
+
+        document.addEventListener('click', (e) => !contextMenu.contains(e.target) && (contextMenu.style.display = 'none'));
+        addPointMenuBtn.addEventListener('click', () => openModal());
+
+        // Event Listeners untuk Kontrol Tampilan
+        zoomInBtn.addEventListener('click', () => { scale *= 1.2; redrawAll(); });
+        zoomOutBtn.addEventListener('click', () => { scale /= 1.2; redrawAll(); });
+        rotateLeftBtn.addEventListener('click', () => { rotation -= 90; redrawAll(); });
+        rotateRightBtn.addEventListener('click', () => { rotation += 90; redrawAll(); });
+        resetViewBtn.addEventListener('click', () => { resetView(); redrawAll(); });
+        
+        function resetView() {
+            scale = 1.0;
+            rotation = 0;
+            panOffset = { x: 0, y: 0 };
+        }
+
+        // Event Listeners untuk Panning
+        canvasContainer.addEventListener('mousedown', (e) => {
+            if (e.target === canvas) {
+                isPanning = true;
+                panStart.x = e.clientX - panOffset.x;
+                panStart.y = e.clientY - panOffset.y;
+            }
+        });
+        canvasContainer.addEventListener('mouseup', () => isPanning = false);
+        canvasContainer.addEventListener('mouseleave', () => isPanning = false);
+        canvasContainer.addEventListener('mousemove', (e) => {
+            if (isPanning) {
+                panOffset.x = e.clientX - panStart.x;
+                panOffset.y = e.clientY - panStart.y;
+                redrawAll();
+            }
+        });
+        
+        // Fungsi Simpan JPG
+        saveJpgBtn.addEventListener('click', () => {
+            if (!image) return;
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = image.width;
+            tempCanvas.height = image.height;
+            const tempCtx = tempCanvas.getContext('2d');
+
+            tempCtx.drawImage(image, 0, 0);
+
+            isolationPoints.forEach(point => {
+                const x = point.x * tempCanvas.width;
+                const y = point.y * tempCanvas.height;
+                const radius = Math.min(tempCanvas.width, tempCanvas.height) * 0.01; // Radius relatif
+
+                tempCtx.fillStyle = point.status === 'isolated' ? '#DC2626' : '#16A34A';
+                tempCtx.beginPath();
+                tempCtx.arc(x, y, radius, 0, 2 * Math.PI);
+                tempCtx.fill();
+
+                tempCtx.strokeStyle = 'white';
+                tempCtx.lineWidth = radius * 0.15;
+                tempCtx.stroke();
+
+                tempCtx.fillStyle = 'white';
+                tempCtx.font = `bold ${radius}px Inter`;
+                tempCtx.textAlign = 'center';
+                tempCtx.textBaseline = 'middle';
+                tempCtx.fillText(point.id, x, y);
+            });
+
+            const link = document.createElement('a');
+            link.download = 'sld-dengan-penanda.jpg';
+            link.href = tempCanvas.toDataURL('image/jpeg', 0.9);
+            link.click();
+        });
+
+    </script>
+</body>
+</html>
