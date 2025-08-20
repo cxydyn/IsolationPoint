@@ -1,10 +1,14 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard Manajer Isolasi</title>
+    <title>Isolation Manager Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF Generation Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+    <!-- PDF Rendering Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -56,6 +60,22 @@
         .context-menu button:hover { background-color: #f3f4f6; }
         .sidebar-item { transition: background-color 0.2s; }
         .sidebar-item.active { background-color: #e0e7ff; color: #4f46e5; }
+        .pdf-thumbnail {
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            padding: 4px;
+            border-radius: 8px;
+        }
+        .pdf-thumbnail:hover {
+            border-color: #4f46e5;
+        }
+        .pdf-thumbnail canvas {
+            width: 100%;
+            height: auto;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800">
@@ -66,86 +86,167 @@
             <div class="p-5 border-b flex items-center gap-3">
                 <svg class="w-8 h-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
                 <div>
-                    <h1 class="text-xl font-bold text-gray-900">Manajer Isolasi</h1>
-                    <p class="text-xs text-gray-500">Proyek & Titik Kontrol</p>
+                    <h1 class="text-xl font-bold text-gray-900">Isolation Manager</h1>
+                    <p class="text-xs text-gray-500">LOTO Projects</p>
                 </div>
             </div>
 
             <!-- Project Management -->
             <div class="p-5 border-b">
-                <h2 class="text-lg font-semibold mb-3 text-gray-700">Proyek SLD</h2>
+                <h2 class="text-lg font-semibold mb-3 text-gray-700">Projects</h2>
                 <div class="flex gap-2 mb-3">
-                    <input type="text" id="project-name" placeholder="Nama Proyek Baru..." class="flex-grow w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
-                    <button id="create-project-btn" class="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">Buat</button>
+                    <input type="text" id="project-name" placeholder="New Project Name..." class="flex-grow w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    <button id="create-project-btn" class="px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">Create</button>
                 </div>
-                <div id="project-list" class="space-y-2 max-h-40 overflow-y-auto">
-                    <!-- Project list will be populated here -->
+                <div class="mb-3">
+                    <label class="w-full cursor-pointer text-center px-4 py-2 bg-gray-600 text-white text-sm font-semibold rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 block">
+                        <span>Upload Project (.json)</span>
+                        <input type="file" id="upload-project-input" accept=".json" class="sr-only">
+                    </label>
                 </div>
+                <div id="project-list" class="space-y-2 max-h-40 overflow-y-auto"></div>
             </div>
             
+            <!-- Fallback Upload Section (Initially Hidden) -->
+            <div id="fallback-upload-section" class="hidden p-5 border-b bg-yellow-50 border-yellow-200">
+                <p class="text-sm text-yellow-800 mb-2 font-semibold">Failed to Load Drawing</p>
+                <p class="text-xs text-yellow-700 mb-3">Please upload a new drawing to start this session.</p>
+                <label class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer">
+                    <span>Upload New Drawing</span>
+                    <input type="file" id="fallback-upload-input" accept="image/*,application/pdf" class="sr-only">
+                </label>
+            </div>
+
+            <!-- Project Details & Actions -->
+            <div id="project-details-section" class="p-5 border-b hidden">
+                 <h2 class="text-lg font-semibold mb-3 text-gray-700">Project Details</h2>
+                 <div class="mb-3">
+                     <label for="project-work-desc" class="block text-sm font-medium text-gray-700">Description of Work</label>
+                     <input type="text" id="project-work-desc" placeholder="e.g., Annual Pump Maintenance" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                 </div>
+                 <button id="print-report-btn" class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 S 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                     <span>Print Report & Export JSON</span>
+                 </button>
+            </div>
+
             <!-- Isolation Points List -->
             <div id="isolation-points-section" class="flex-grow flex flex-col min-h-0 p-5">
-                <h2 class="text-lg font-semibold mb-2 text-gray-700">Titik Isolasi</h2>
+                <h2 class="text-lg font-semibold mb-2 text-gray-700">Isolation Points</h2>
                 <div id="points-list" class="space-y-3 flex-grow overflow-y-auto pr-2"></div>
                 <div id="no-points-message" class="text-center py-8 px-4 border-2 border-dashed rounded-lg mt-4">
-                    <p class="text-gray-500">Belum ada titik isolasi.</p>
+                    <p class="text-gray-500">No isolation points yet.</p>
                 </div>
             </div>
         </aside>
 
         <!-- Main Content -->
         <main class="flex-1 p-4 md:p-6 bg-gray-100 flex flex-col">
-             <div id="canvas-container" class="relative w-full h-full bg-white rounded-lg flex items-center justify-center overflow-hidden shadow-md">
-                <canvas id="sld-canvas"></canvas>
-                <div id="marker-container" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
-                <div id="canvas-placeholder" class="text-center p-10">
-                    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
-                    <h3 class="mt-2 text-sm font-medium text-gray-900">Tidak Ada Proyek Terpilih</h3>
-                    <p class="mt-1 text-sm text-gray-500">Buat atau pilih proyek untuk memulai.</p>
-                    <div class="mt-6">
-                        <label for="sld-upload" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer">
-                            <svg class="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
-                            <span>Unggah SLD untuk Proyek Baru</span>
-                            <input type="file" id="sld-upload" accept="image/*,application/pdf" class="sr-only">
-                        </label>
-                    </div>
-                </div>
-                <!-- View Controls Toolbar -->
-                <div id="view-controls" class="absolute top-4 right-4 bg-white bg-opacity-80 backdrop-blur-sm rounded-lg shadow-lg p-2 flex gap-2 hidden">
-                    <button id="zoom-in-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Perbesar"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"></path></svg></button>
-                    <button id="zoom-out-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Perkecil"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"></path></svg></button>
-                    <button id="rotate-left-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Putar Kiri"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg></button>
-                    <button id="rotate-right-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Putar Kanan"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg></button>
-                    <button id="reset-view-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Reset Tampilan"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12a8 8 0 018-8h.5"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12a8 8 0 01-8 8h-.5"></path></svg></button>
-                    <button id="save-jpg-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Simpan sebagai JPG"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg></button>
-                </div>
-            </div>
+              <div id="canvas-container" class="relative w-full h-full bg-white rounded-lg flex items-center justify-center overflow-hidden shadow-md">
+                  <canvas id="sld-canvas"></canvas>
+                  <div id="marker-container" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
+                  <div id="canvas-placeholder" class="text-center p-10">
+                      <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+                      <h3 class="mt-2 text-sm font-medium text-gray-900">No Project Selected</h3>
+                      <p class="mt-1 text-sm text-gray-500">Create or select a project to start.</p>
+                      <div class="mt-6">
+                          <label class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer">
+                              <svg class="-ml-1 mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+                              <span>Upload Drawing for New Project</span>
+                              <input type="file" id="sld-upload" accept="image/*,application/pdf" class="sr-only">
+                          </label>
+                      </div>
+                  </div>
+                  <!-- View Controls Toolbar -->
+                  <div id="view-controls" class="absolute top-4 right-4 bg-white bg-opacity-80 backdrop-blur-sm rounded-lg shadow-lg p-2 flex gap-2 hidden">
+                      <button id="zoom-in-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Zoom In"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"></path></svg></button>
+                      <button id="zoom-out-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Zoom Out"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"></path></svg></button>
+                      <button id="reset-view-btn" class="control-btn p-2 rounded-md hover:bg-gray-200" title="Reset View"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12a8 8 0 018-8h.5"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12a8 8 0 01-8 8h-.5"></path></svg></button>
+                  </div>
+              </div>
         </main>
     </div>
 
-    <!-- Modal -->
-    <div id="point-modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-50">
-        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md m-4">
-            <h2 class="text-2xl font-bold mb-4" id="modal-title">Detail Titik Isolasi</h2>
+    <!-- Point Details Modal -->
+    <div id="point-modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-50 overflow-y-auto">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-2xl m-4">
+            <h2 class="text-2xl font-bold mb-4" id="modal-title">Isolation Point Details</h2>
             <form id="point-form">
                 <input type="hidden" id="point-id">
-                <div class="mb-4">
-                    <label for="point-name" class="block text-sm font-medium text-gray-700">Nama/Deskripsi</label>
-                    <input type="text" id="point-name" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="Contoh: CB-01 Feeder A" required>
+                <input type="hidden" id="point-status">
+                <div class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label for="point-sequence" class="block text-sm font-medium text-gray-700">No.</label>
+                            <input type="number" id="point-sequence" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., 1" required>
+                        </div>
+                        <div class="md:col-span-2">
+                            <label for="point-name" class="block text-sm font-medium text-gray-700">Equipment Name/Tag</label>
+                            <input type="text" id="point-name" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., CB-01 Feeder A" required>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                           <label for="point-location" class="block text-sm font-medium text-gray-700">Location</label>
+                           <input type="text" id="point-location" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., MCC Room">
+                        </div>
+                         <div>
+                           <label for="point-device-type" class="block text-sm font-medium text-gray-700">Isolation Device Type</label>
+                           <input type="text" id="point-device-type" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Breaker, Valve">
+                        </div>
+                        <div>
+                            <label for="point-isolation-type" class="block text-sm font-medium text-gray-700">Isolation Type</label>
+                            <select id="point-isolation-type" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
+                                <option>Electrical</option>
+                                <option>Physical</option>
+                            </select>
+                        </div>
+                    </div>
+                     <div class="p-4 border rounded-md bg-gray-50">
+                         <h3 class="text-lg font-medium text-gray-800 mb-3">Isolation</h3>
+                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                             <div>
+                                 <label for="point-normal-pos" class="block text-sm font-medium text-gray-700">Normal Position</label>
+                                 <input type="text" id="point-normal-pos" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Closed, On">
+                             </div>
+                              <div>
+                                 <label for="point-isolated-pos" class="block text-sm font-medium text-gray-700">Isolated Position</label>
+                                 <input type="text" id="point-isolated-pos" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., Open, Off">
+                             </div>
+                              <div>
+                                 <label for="point-lock-no" class="block text-sm font-medium text-gray-700">Tag/Lock No.</label>
+                                 <input type="text" id="point-lock-no" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g., L-123">
+                             </div>
+                             <div>
+                                 <label for="point-pic" class="block text-sm font-medium text-gray-700">PIC</label>
+                                 <input type="text" id="point-pic" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="Technician's Name">
+                             </div>
+                              <div class="md:col-span-2">
+                                 <label for="point-datetime" class="block text-sm font-medium text-gray-700">Date/Time</label>
+                                 <input type="datetime-local" id="point-datetime" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                             </div>
+                         </div>
+                       </div>
                 </div>
-                <div class="mb-4">
-                    <label for="point-status" class="block text-sm font-medium text-gray-700">Status</label>
-                    <select id="point-status" class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md">
-                        <option value="isolated">Isolated (Terisolasi)</option>
-                        <option value="de-isolated">De-isolated (Normal)</option>
-                    </select>
-                </div>
-                <div class="flex justify-end space-x-4">
-                    <button type="button" id="delete-point-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Hapus</button>
-                    <button type="button" id="close-modal-btn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 focus:outline-none">Batal</button>
-                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">Simpan</button>
+                <div class="flex justify-end space-x-4 mt-6">
+                    <button type="button" id="delete-point-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Delete</button>
+                    <button type="button" id="close-modal-btn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 focus:outline-none">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">Save</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- PDF Page Selector Modal -->
+    <div id="pdf-page-selector-modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-50 overflow-y-auto">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-4xl m-4">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-2xl font-bold">Select a Page</h2>
+                <button id="close-pdf-modal-btn" class="text-gray-500 hover:text-gray-800">&times;</button>
+            </div>
+            <div id="pdf-thumbnails-container" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 max-h-[70vh] overflow-y-auto p-2 bg-gray-100 rounded">
+                <!-- Thumbnails will be injected here -->
+            </div>
         </div>
     </div>
 
@@ -153,21 +254,22 @@
     <div id="context-menu" class="context-menu">
         <button id="add-point-menu-btn">
             <svg class="w-5 h-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z" clip-rule="evenodd" /></svg>
-            <span>Tambah Titik Isolasi</span>
+            <span>Add Isolation Point</span>
         </button>
     </div>
 
     <script>
+    document.addEventListener('DOMContentLoaded', () => {
         pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+        const { jsPDF } = window.jspdf;
 
         // DOM Elements
         const sldUpload = document.getElementById('sld-upload');
-        const saveJpgBtn = document.getElementById('save-jpg-btn');
+        const printReportBtn = document.getElementById('print-report-btn');
         const canvasContainer = document.getElementById('canvas-container');
         const canvas = document.getElementById('sld-canvas');
         const ctx = canvas.getContext('2d');
         const canvasPlaceholder = document.getElementById('canvas-placeholder');
-        const isolationPointsSection = document.getElementById('isolation-points-section');
         const noPointsMessage = document.getElementById('no-points-message');
         const pointsList = document.getElementById('points-list');
         const markerContainer = document.getElementById('marker-container');
@@ -175,8 +277,17 @@
         const modalTitle = document.getElementById('modal-title');
         const pointForm = document.getElementById('point-form');
         const pointIdInput = document.getElementById('point-id');
+        const pointSequenceInput = document.getElementById('point-sequence');
         const pointNameInput = document.getElementById('point-name');
+        const pointLocationInput = document.getElementById('point-location');
+        const pointDeviceTypeInput = document.getElementById('point-device-type');
+        const pointIsolationTypeInput = document.getElementById('point-isolation-type');
         const pointStatusInput = document.getElementById('point-status');
+        const pointNormalPosInput = document.getElementById('point-normal-pos');
+        const pointIsolatedPosInput = document.getElementById('point-isolated-pos');
+        const pointLockNoInput = document.getElementById('point-lock-no');
+        const pointPicInput = document.getElementById('point-pic');
+        const pointDatetimeInput = document.getElementById('point-datetime');
         const closeModalBtn = document.getElementById('close-modal-btn');
         const deletePointBtn = document.getElementById('delete-point-btn');
         const contextMenu = document.getElementById('context-menu');
@@ -184,195 +295,112 @@
         const viewControls = document.getElementById('view-controls');
         const zoomInBtn = document.getElementById('zoom-in-btn');
         const zoomOutBtn = document.getElementById('zoom-out-btn');
-        const rotateLeftBtn = document.getElementById('rotate-left-btn');
-        const rotateRightBtn = document.getElementById('rotate-right-btn');
         const resetViewBtn = document.getElementById('reset-view-btn');
-        
-        // Project Management Elements
         const projectNameInput = document.getElementById('project-name');
         const createProjectBtn = document.getElementById('create-project-btn');
         const projectList = document.getElementById('project-list');
+        const projectDetailsSection = document.getElementById('project-details-section');
+        const projectWorkDescInput = document.getElementById('project-work-desc');
+        const fallbackUploadSection = document.getElementById('fallback-upload-section');
+        const fallbackUploadInput = document.getElementById('fallback-upload-input');
+        const uploadProjectInput = document.getElementById('upload-project-input');
+        const pdfPageSelectorModal = document.getElementById('pdf-page-selector-modal');
+        const pdfThumbnailsContainer = document.getElementById('pdf-thumbnails-container');
+        const closePdfModalBtn = document.getElementById('close-pdf-modal-btn');
 
         // App State
         let projects = {};
         let activeProjectName = null;
         let image = null;
         let currentContextMenuPos = { x: 0, y: 0 };
-
+        
         // Transformation State
         let scale = 1.0;
-        let rotation = 0;
         let panOffset = { x: 0, y: 0 };
         let isPanning = false;
         let panStart = { x: 0, y: 0 };
 
-        // --- LocalStorage Functions ---
-        function saveProjects() {
-            localStorage.setItem('isolationProjects', JSON.stringify(projects));
-        }
-
-        function loadProjects() {
-            const savedProjects = localStorage.getItem('isolationProjects');
-            projects = savedProjects ? JSON.parse(savedProjects) : {};
-            const lastActive = localStorage.getItem('lastActiveIsolationProject');
-            if (lastActive && projects[lastActive]) {
-                loadProject(lastActive);
-            }
-            renderProjectList();
-        }
-
-        // --- Project Management ---
-        function createProject(name, imageData) {
-            if (!name || projects[name]) {
-                alert("Nama proyek tidak valid atau sudah ada.");
-                return;
-            }
-            projects[name] = {
-                imageData: imageData,
-                points: []
-            };
-            saveProjects();
-            loadProject(name);
-            renderProjectList();
-            projectNameInput.value = '';
-        }
-
-        function loadProject(name) {
-            if (!projects[name]) return;
-            activeProjectName = name;
-            localStorage.setItem('lastActiveIsolationProject', name);
+        /**
+         * Redraws the canvas, applying current scale and pan transformations.
+         */
+        function redrawAll() {
+            if (!image) return;
+            // Set canvas to full container size
+            canvas.width = canvasContainer.clientWidth;
+            canvas.height = canvasContainer.clientHeight;
             
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            // Move origin to center of canvas, apply pan, then scale
+            ctx.translate(canvas.width / 2 + panOffset.x, canvas.height / 2 + panOffset.y);
+            ctx.scale(scale, scale);
+            // Draw image centered on the new origin
+            ctx.drawImage(image, -image.width / 2, -image.height / 2, image.width, image.height);
+            ctx.restore();
+            
+            updateMarkers();
+        }
+        
+        /**
+         * Resets the view to the initial fitted state.
+         */
+        function resetView() {
+            fitImageToContainer();
+            redrawAll();
+        }
+
+        /**
+         * Loads an image from a source and calls resetView on success.
+         */
+        function loadImage(src) {
             image = new Image();
             image.onload = () => {
                 canvasPlaceholder.style.display = 'none';
-                viewControls.classList.remove('hidden');
-                resetView();
-                redrawAll();
-            };
-            image.src = projects[name].imageData;
-            
-            renderProjectList();
-            updatePointsList();
-        }
-        
-        function deleteProject(name) {
-            if (confirm(`Apakah Anda yakin ingin menghapus proyek "${name}"?`)) {
-                delete projects[name];
-                if (activeProjectName === name) {
-                    activeProjectName = null;
-                    localStorage.removeItem('lastActiveIsolationProject');
-                    image = null;
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    canvasPlaceholder.style.display = 'flex';
-                    viewControls.classList.add('hidden');
-                    updatePointsList();
-                }
-                saveProjects();
-                renderProjectList();
-            }
-        }
-
-        function renderProjectList() {
-            projectList.innerHTML = '';
-            Object.keys(projects).forEach(name => {
-                const item = document.createElement('div');
-                item.className = `sidebar-item flex justify-between items-center p-2 rounded-md cursor-pointer hover:bg-gray-100 ${name === activeProjectName ? 'active' : ''}`;
+                if(fallbackUploadSection) fallbackUploadSection.classList.add('hidden');
                 
-                const nameSpan = document.createElement('span');
-                nameSpan.textContent = name;
-                nameSpan.className = "flex-grow";
-                nameSpan.onclick = () => loadProject(name);
-                
-                const deleteBtn = document.createElement('button');
-                deleteBtn.innerHTML = `<svg class="w-4 h-4 text-gray-400 hover:text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
-                deleteBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    deleteProject(name);
-                };
-
-                item.appendChild(nameSpan);
-                item.appendChild(deleteBtn);
-                projectList.appendChild(item);
-            });
-        }
-
-        // --- File Handling ---
-        function handleFileUpload(file) {
-            if (!file) return;
-            let defaultProjectName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-            
-            const processFile = (dataUrl) => {
-                let finalProjectName = defaultProjectName;
-                let counter = 1;
-                while(projects[finalProjectName]) {
-                    finalProjectName = `${defaultProjectName} (${counter++})`;
+                if (activeProjectName && projects[activeProjectName]) {
+                    projects[activeProjectName].isDrawingLandscape = image.width > image.height;
+                    saveProjects();
                 }
-                createProject(finalProjectName, dataUrl);
+
+                resetView(); // Use resetView to set initial scale and draw
             };
-
-            const reader = new FileReader();
-            if (file.type.startsWith('image/')) {
-                reader.onload = (event) => processFile(event.target.result);
-                reader.readAsDataURL(file);
-            } else if (file.type === 'application/pdf') {
-                reader.onload = (event) => {
-                    pdfjsLib.getDocument({ data: event.target.result }).promise.then(pdf => pdf.getPage(1))
-                    .then(page => {
-                        const desiredWidth = 2000;
-                        const viewport = page.getViewport({ scale: 1 });
-                        const scale = desiredWidth / viewport.width;
-                        const scaledViewport = page.getViewport({ scale });
-
-                        const tempCanvas = document.createElement('canvas');
-                        tempCanvas.height = scaledViewport.height;
-                        tempCanvas.width = scaledViewport.width;
-                        page.render({ canvasContext: tempCanvas.getContext('2d'), viewport: scaledViewport }).promise.then(() => {
-                            processFile(tempCanvas.toDataURL());
-                        });
-                    }).catch(err => alert('Gagal memproses file PDF.'));
-                };
-                reader.readAsArrayBuffer(file);
-            } else {
-                alert('Format file tidak didukung.');
-            }
+            image.onerror = () => {
+                canvasPlaceholder.textContent = 'Gagal memuat denah. Silakan unggah denah baru di samping.';
+                canvasPlaceholder.style.display = 'block';
+                if(fallbackUploadSection) fallbackUploadSection.classList.remove('hidden');
+            };
+            image.src = src;
         }
 
-        sldUpload.addEventListener('change', (e) => handleFileUpload(e.target.files[0]));
-        createProjectBtn.addEventListener('click', () => {
-             const name = projectNameInput.value.trim();
-             if (name) {
-                sldUpload.click(); // Trigger file upload after naming
-             } else {
-                alert("Silakan masukkan nama proyek terlebih dahulu.");
-             }
-        });
-
-
-        // --- Canvas & Drawing ---
-        function redrawAll() {
+        /**
+         * Calculates the correct initial scale to make the image fit the container
+         * while preserving its aspect ratio.
+         */
+        function fitImageToContainer() {
             if (!image) return;
-            canvas.width = canvasContainer.clientWidth;
-            canvas.height = canvasContainer.clientHeight;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.save();
-            ctx.translate(canvas.width / 2 + panOffset.x, canvas.height / 2 + panOffset.y);
-            ctx.rotate(rotation * Math.PI / 180);
-            ctx.scale(scale, scale);
-            ctx.drawImage(image, -image.width / 2, -image.height / 2, image.width, image.height);
-            ctx.restore();
-            updateMarkers();
+
+            const containerWidth = canvasContainer.clientWidth;
+            const containerHeight = canvasContainer.clientHeight;
+            
+            const imageAspectRatio = image.width / image.height;
+            const containerAspectRatio = containerWidth / containerHeight;
+
+            if (imageAspectRatio > containerAspectRatio) {
+                // Image is wider than container, fit to width
+                scale = containerWidth / image.width;
+            } else {
+                // Image is taller than container, fit to height
+                scale = containerHeight / image.height;
+            }
+            panOffset = { x: 0, y: 0 };
         }
 
         function getInverseTransformedPoint(screenX, screenY) {
             let x = screenX - canvas.width / 2 - panOffset.x;
             let y = screenY - canvas.height / 2 - panOffset.y;
-            const rad = -rotation * Math.PI / 180;
-            const cos = Math.cos(rad);
-            const sin = Math.sin(rad);
-            const unrotatedX = x * cos + y * sin;
-            const unrotatedY = -x * sin + y * cos;
-            const unscaledX = unrotatedX / scale;
-            const unscaledY = unrotatedY / scale;
+            const unscaledX = x / scale;
+            const unscaledY = y / scale;
             const finalX = unscaledX + image.width / 2;
             const finalY = unscaledY + image.height / 2;
             return { x: finalX / image.width, y: finalY / image.height };
@@ -383,25 +411,259 @@
             let y = relativeY * image.height - image.height / 2;
             x *= scale;
             y *= scale;
-            const rad = rotation * Math.PI / 180;
-            const cos = Math.cos(rad);
-            const sin = Math.sin(rad);
-            const rotatedX = x * cos - y * sin;
-            const rotatedY = x * sin + y * cos;
             return { 
-                x: rotatedX + panOffset.x + canvas.width / 2, 
-                y: rotatedY + panOffset.y + canvas.height / 2 
+                x: x + panOffset.x + canvas.width / 2, 
+                y: y + panOffset.y + canvas.height / 2 
             };
+        }
+        
+        // --- LocalStorage Functions ---
+        function saveProjects() {
+            localStorage.setItem('isolationProjects_v4', JSON.stringify(projects));
+        }
+
+        function loadProjects() {
+            const savedProjects = localStorage.getItem('isolationProjects_v4');
+            projects = savedProjects ? JSON.parse(savedProjects) : {};
+            const lastActive = localStorage.getItem('lastActiveIsolationProject_v4');
+            if (lastActive && projects[lastActive]) {
+                loadProject(lastActive);
+            } else {
+                updateUIForNoProject();
+            }
+            renderProjectList();
+        }
+
+        // --- Project Management ---
+        function createProject(name, imageData) {
+            if (!name || projects[name]) {
+                alert("Project name is invalid or already exists.");
+                return;
+            }
+            projects[name] = {
+                imageData: imageData,
+                points: [],
+                descriptionOfWork: '',
+                isDrawingLandscape: true // Default value, will be updated on image load
+            };
+            saveProjects();
+            loadProject(name);
+            renderProjectList();
+            projectNameInput.value = '';
+        }
+
+        function loadProject(name) {
+            if (!projects[name]) return;
+            activeProjectName = name;
+            localStorage.setItem('lastActiveIsolationProject_v4', name);
+            
+            loadImage(projects[name].imageData);
+            
+            canvasPlaceholder.style.display = 'none';
+            viewControls.classList.remove('hidden');
+            projectDetailsSection.classList.remove('hidden');
+            projectWorkDescInput.value = projects[activeProjectName].descriptionOfWork || '';
+            
+            renderProjectList();
+            updatePointsList();
+        }
+        
+        function deleteProject(name) {
+            if (confirm(`Are you sure you want to delete the project "${name}"?`)) {
+                delete projects[name];
+                if (activeProjectName === name) {
+                    activeProjectName = null;
+                    localStorage.removeItem('lastActiveIsolationProject_v4');
+                    updateUIForNoProject();
+                }
+                saveProjects();
+                renderProjectList();
+            }
+        }
+        
+        function updateUIForNoProject() {
+             image = null;
+             if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+             canvasPlaceholder.style.display = 'block';
+             viewControls.classList.add('hidden');
+             projectDetailsSection.classList.add('hidden');
+             updatePointsList();
+        }
+
+        function renderProjectList() {
+            projectList.innerHTML = '';
+            Object.keys(projects).forEach(name => {
+                const item = document.createElement('div');
+                item.className = `sidebar-item flex justify-between items-center p-2 rounded-md cursor-pointer hover:bg-gray-100 ${name === activeProjectName ? 'active' : ''}`;
+                
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = name;
+                nameSpan.className = "flex-grow truncate";
+                nameSpan.onclick = () => loadProject(name);
+                
+                const buttonGroup = document.createElement('div');
+                buttonGroup.className = 'flex items-center flex-shrink-0 ml-2';
+
+                const exportBtn = document.createElement('button');
+                exportBtn.innerHTML = `<svg class="w-4 h-4 text-gray-400 hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
+                exportBtn.onclick = (e) => { e.stopPropagation(); exportProject(name); };
+                exportBtn.title = "Export Project";
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.innerHTML = `<svg class="w-4 h-4 text-gray-400 hover:text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
+                deleteBtn.onclick = (e) => { e.stopPropagation(); deleteProject(name); };
+                deleteBtn.title = "Delete Project";
+
+                item.appendChild(nameSpan);
+                buttonGroup.appendChild(exportBtn);
+                buttonGroup.appendChild(deleteBtn);
+                item.appendChild(buttonGroup);
+                projectList.appendChild(item);
+            });
+        }
+
+        // --- File Handling & Project I/O ---
+        function handleFileUpload(file) {
+            if (!file) return;
+            let defaultProjectName = projectNameInput.value.trim() || file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+            
+            const processFile = (dataUrl) => {
+                let finalProjectName = defaultProjectName;
+                let counter = 1;
+                while(projects[finalProjectName]) { finalProjectName = `${defaultProjectName} (${counter++})`; }
+                createProject(finalProjectName, dataUrl);
+            };
+
+            const reader = new FileReader();
+            if (file.type.startsWith('image/')) {
+                reader.onload = (event) => processFile(event.target.result);
+                reader.readAsDataURL(file);
+            } else if (file.type === 'application/pdf') {
+                reader.onload = (event) => {
+                    pdfjsLib.getDocument({ data: event.target.result }).promise.then(pdf => {
+                        if (pdf.numPages > 1) {
+                            renderPdfThumbnails(pdf, processFile);
+                            pdfPageSelectorModal.classList.remove('hidden');
+                        } else {
+                            processSelectedPage(pdf, 1, processFile);
+                        }
+                    }).catch(err => alert('Failed to process PDF file.'));
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                alert('Unsupported file format.');
+            }
+        }
+
+        function renderPdfThumbnails(pdf, callback) {
+            pdfThumbnailsContainer.innerHTML = 'Rendering thumbnails...';
+            const promises = [];
+            for (let i = 1; i <= pdf.numPages; i++) {
+                promises.push(pdf.getPage(i).then(page => {
+                    const viewport = page.getViewport({ scale: 1 });
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    const scale = 150 / viewport.width;
+                    const scaledViewport = page.getViewport({ scale });
+                    canvas.height = scaledViewport.height;
+                    canvas.width = scaledViewport.width;
+
+                    return page.render({ canvasContext: context, viewport: scaledViewport }).promise.then(() => {
+                        const thumbnailWrapper = document.createElement('div');
+                        thumbnailWrapper.className = 'pdf-thumbnail';
+                        thumbnailWrapper.innerHTML = `<p class="text-center font-semibold mb-1">Page ${i}</p>`;
+                        thumbnailWrapper.appendChild(canvas);
+                        thumbnailWrapper.onclick = () => {
+                            processSelectedPage(pdf, i, callback);
+                            pdfPageSelectorModal.classList.add('hidden');
+                        };
+                        return thumbnailWrapper;
+                    });
+                }));
+            }
+
+            Promise.all(promises).then(thumbnails => {
+                pdfThumbnailsContainer.innerHTML = '';
+                thumbnails.forEach(thumb => pdfThumbnailsContainer.appendChild(thumb));
+            });
+        }
+
+        function processSelectedPage(pdf, pageNumber, callback) {
+            pdf.getPage(pageNumber).then(page => {
+                const desiredWidth = 2000;
+                const viewport = page.getViewport({ scale: 1 });
+                const scale = desiredWidth / viewport.width;
+                const scaledViewport = page.getViewport({ scale });
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.height = scaledViewport.height;
+                tempCanvas.width = scaledViewport.width;
+                const tempCtx = tempCanvas.getContext('2d');
+
+                page.render({ canvasContext: tempCtx, viewport: scaledViewport }).promise.then(() => {
+                    callback(tempCanvas.toDataURL('image/jpeg', 0.9));
+                });
+            });
+        }
+
+
+        function exportProject(name) {
+            const projectData = projects[name];
+            if (!projectData) return;
+
+            const jsonString = JSON.stringify(projectData, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${name}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function handleProjectUpload(file) {
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const projectData = JSON.parse(event.target.result);
+                    
+                    // Basic validation
+                    if (!projectData.imageData || !projectData.points) {
+                        throw new Error("Invalid project file format.");
+                    }
+
+                    let projectName = file.name.replace(/\.json$/, '');
+                    let finalProjectName = projectName;
+                    let counter = 1;
+                    while(projects[finalProjectName]) {
+                        finalProjectName = `${projectName} (${counter++})`;
+                    }
+
+                    projects[finalProjectName] = projectData;
+                    saveProjects();
+                    renderProjectList();
+                    loadProject(finalProjectName);
+
+                } catch (error) {
+                    alert(`Failed to upload project: ${error.message}`);
+                } finally {
+                    uploadProjectInput.value = ''; // Reset input
+                }
+            };
+            reader.readAsText(file);
         }
 
         // --- UI Updates ---
         function updatePointsList() {
-            if (!activeProjectName) {
+            if (!activeProjectName || !projects[activeProjectName]) {
                 pointsList.innerHTML = '';
                 noPointsMessage.style.display = 'block';
                 return;
             }
-            const currentPoints = projects[activeProjectName].points;
+            const currentPoints = projects[activeProjectName].points.sort((a,b) => a.sequence - b.sequence);
             pointsList.innerHTML = '';
             if (currentPoints.length === 0) {
                 noPointsMessage.style.display = 'block';
@@ -416,13 +678,11 @@
                 listItem.dataset.id = point.id;
                 listItem.innerHTML = `
                     <div class="flex justify-between items-start">
-                        <p class="font-bold text-gray-800">${point.name}</p>
-                        <span class="text-xs font-mono px-2 py-0.5 bg-gray-200 text-gray-600 rounded-full">#${point.id}</span>
+                        <p class="font-bold text-gray-800 truncate" title="${point.name}">${point.name}</p>
+                        <span class="text-sm font-bold flex-shrink-0 ml-2 w-8 h-8 flex items-center justify-center bg-gray-200 text-gray-700 rounded-full">${point.sequence || '?'}</span>
                     </div>
-                    <div class="flex items-center gap-2 mt-1">
-                        <span class="w-3 h-3 rounded-full bg-${statusColor}-500"></span>
-                        <p class="text-sm text-gray-600">${point.status === 'isolated' ? 'Terisolasi' : 'Normal'}</p>
-                    </div>
+                    <p class="text-xs text-gray-600 mt-1 truncate">Location: ${point.location || 'N/A'}</p>
+                    <p class="text-xs text-gray-500 mt-1 truncate">PIC: ${point.pic || 'N/A'}</p>
                 `;
                 listItem.addEventListener('click', () => openModal(point.id));
                 pointsList.appendChild(listItem);
@@ -441,7 +701,7 @@
                 marker.style.backgroundColor = point.status === 'isolated' ? '#DC2626' : '#16A34A';
                 marker.style.left = `${pos.x - 14}px`;
                 marker.style.top = `${pos.y - 14}px`;
-                marker.textContent = point.id;
+                marker.textContent = point.sequence || point.id;
                 marker.addEventListener('click', (e) => {
                     e.stopPropagation();
                     openModal(point.id);
@@ -454,20 +714,32 @@
         function openModal(id = null) {
             contextMenu.style.display = 'none';
             pointForm.reset();
+            const currentPoints = projects[activeProjectName].points;
             if (id) {
-                const point = projects[activeProjectName].points.find(p => p.id === id);
+                const point = currentPoints.find(p => p.id === id);
                 if (!point) return;
-                modalTitle.textContent = `Edit Titik Isolasi #${id}`;
+                modalTitle.textContent = `Edit Isolation Point #${point.sequence || id}`;
                 pointIdInput.value = point.id;
-                pointNameInput.value = point.name;
-                pointStatusInput.value = point.status;
+                pointSequenceInput.value = point.sequence || '';
+                pointNameInput.value = point.name || '';
+                pointLocationInput.value = point.location || '';
+                pointDeviceTypeInput.value = point.deviceType || '';
+                pointIsolationTypeInput.value = point.isolationType || 'Electrical';
+                pointStatusInput.value = point.status || 'isolated';
+                pointNormalPosInput.value = point.normalPos || '';
+                pointIsolatedPosInput.value = point.isolatedPos || '';
+                pointLockNoInput.value = point.lockNo || '';
+                pointPicInput.value = point.pic || '';
+                pointDatetimeInput.value = point.datetime || '';
                 deletePointBtn.classList.remove('hidden');
             } else {
-                const currentPoints = projects[activeProjectName].points;
                 const newId = currentPoints.length > 0 ? Math.max(...currentPoints.map(p => p.id)) + 1 : 1;
-                modalTitle.textContent = 'Tambah Titik Isolasi Baru';
+                const nextSequence = currentPoints.length > 0 ? Math.max(...currentPoints.map(p => parseInt(p.sequence) || 0)) + 1 : 1;
+                modalTitle.textContent = 'Add New Isolation Point';
                 pointIdInput.value = newId;
+                pointSequenceInput.value = nextSequence;
                 pointStatusInput.value = 'isolated';
+                pointDatetimeInput.value = new Date().toISOString().slice(0, 16);
                 deletePointBtn.classList.add('hidden');
             }
             pointModal.classList.remove('hidden');
@@ -483,8 +755,17 @@
             const id = parseInt(pointIdInput.value);
             const pointData = {
                 id,
+                sequence: parseInt(pointSequenceInput.value) || 0,
                 name: pointNameInput.value,
+                location: pointLocationInput.value,
+                deviceType: pointDeviceTypeInput.value,
+                isolationType: pointIsolationTypeInput.value,
                 status: pointStatusInput.value,
+                normalPos: pointNormalPosInput.value,
+                isolatedPos: pointIsolatedPosInput.value,
+                lockNo: pointLockNoInput.value,
+                pic: pointPicInput.value,
+                datetime: pointDatetimeInput.value,
             };
 
             const currentPoints = projects[activeProjectName].points;
@@ -507,7 +788,7 @@
         
         deletePointBtn.addEventListener('click', () => {
             const id = parseInt(pointIdInput.value);
-            if (confirm(`Apakah Anda yakin ingin menghapus Titik Isolasi #${id}?`)) {
+            if (confirm(`Are you sure you want to delete this Isolation Point?`)) {
                 projects[activeProjectName].points = projects[activeProjectName].points.filter(p => p.id !== id);
                 saveProjects();
                 updatePointsList();
@@ -516,10 +797,47 @@
             }
         });
 
-        // --- Event Listeners ---
-        window.addEventListener('resize', redrawAll);
+        // --- Event Listeners & Initialisation ---
+
+        // Initial Load
+        loadProjects();
+
+        window.addEventListener('beforeunload', () => {
+            localStorage.removeItem('isolationProjects_v4');
+            localStorage.removeItem('lastActiveIsolationProject_v4');
+        });
+
+        // Setup event listeners
+        window.addEventListener('resize', resetView); // Recalculate fit on resize
         closeModalBtn.addEventListener('click', closeModal);
         pointModal.addEventListener('click', (e) => e.target === pointModal && closeModal());
+        closePdfModalBtn.addEventListener('click', () => pdfPageSelectorModal.classList.add('hidden'));
+
+        resetViewBtn.addEventListener('click', resetView);
+
+        sldUpload.addEventListener('change', (e) => handleFileUpload(e.target.files[0]));
+        createProjectBtn.addEventListener('click', () => {
+             const name = projectNameInput.value.trim();
+             if (name) { sldUpload.click(); } 
+             else { alert("Please enter a project name first."); }
+        });
+
+        uploadProjectInput.addEventListener('change', (e) => handleProjectUpload(e.target.files[0]));
+
+        projectWorkDescInput.addEventListener('change', (e) => {
+            if (activeProjectName && projects[activeProjectName]) {
+                projects[activeProjectName].descriptionOfWork = e.target.value;
+                saveProjects();
+            }
+        });
+
+        fallbackUploadInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if(file) {
+                 handleFileUpload(file);
+                 fallbackUploadSection.classList.add('hidden');
+            }
+        });
         
         canvasContainer.addEventListener('contextmenu', (e) => {
             e.preventDefault();
@@ -539,15 +857,6 @@
 
         zoomInBtn.addEventListener('click', () => { scale *= 1.2; redrawAll(); });
         zoomOutBtn.addEventListener('click', () => { scale /= 1.2; redrawAll(); });
-        rotateLeftBtn.addEventListener('click', () => { rotation = (rotation - 90) % 360; redrawAll(); });
-        rotateRightBtn.addEventListener('click', () => { rotation = (rotation + 90) % 360; redrawAll(); });
-        resetViewBtn.addEventListener('click', () => { resetView(); redrawAll(); });
-        
-        function resetView() {
-            scale = 1.0;
-            rotation = 0;
-            panOffset = { x: 0, y: 0 };
-        }
 
         canvasContainer.addEventListener('mousedown', (e) => {
             if (e.target === canvas) {
@@ -566,18 +875,32 @@
             }
         });
         
-        saveJpgBtn.addEventListener('click', () => {
+        // --- Report Generation ---
+        printReportBtn.addEventListener('click',  () => {
             if (!image || !activeProjectName) return;
+
+            const isDrawingLandscape = projects[activeProjectName].isDrawingLandscape;
+            const doc = new jsPDF({ orientation: isDrawingLandscape ? 'landscape' : 'portrait' });
+
+            const sortedPoints = [...projects[activeProjectName].points].sort((a, b) => a.sequence - b.sequence);
+            const descriptionOfWork = projects[activeProjectName].descriptionOfWork || 'N/A';
+
+            // Page 1: Image
+            doc.setFontSize(12);
+            doc.setFont(undefined, 'bold');
+            doc.text(`Attachment: Marked Drawing for ${activeProjectName}`, doc.internal.pageSize.getWidth() / 2, 15, { align: 'center' });
+            
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = image.width;
             tempCanvas.height = image.height;
             const tempCtx = tempCanvas.getContext('2d');
             tempCtx.drawImage(image, 0, 0);
-            projects[activeProjectName].points.forEach(point => {
+            
+            sortedPoints.forEach(point => {
                 const x = point.x * tempCanvas.width;
                 const y = point.y * tempCanvas.height;
                 const radius = Math.min(tempCanvas.width, tempCanvas.height) * 0.012;
-                tempCtx.fillStyle = point.status === 'isolated' ? '#DC2626' : '#16A34A';
+                tempCtx.fillStyle = '#DC2626'; // Always red for LOTO
                 tempCtx.beginPath();
                 tempCtx.arc(x, y, radius, 0, 2 * Math.PI);
                 tempCtx.fill();
@@ -588,16 +911,114 @@
                 tempCtx.font = `bold ${radius}px Inter`;
                 tempCtx.textAlign = 'center';
                 tempCtx.textBaseline = 'middle';
-                tempCtx.fillText(point.id, x, y);
+                tempCtx.fillText(point.sequence, x, y);
             });
-            const link = document.createElement('a');
-            link.download = `${activeProjectName}-ditandai.jpg`;
-            link.href = tempCanvas.toDataURL('image/jpeg', 0.9);
-            link.click();
-        });
+            
+            const imageDataUrl = tempCanvas.toDataURL('image/jpeg', 0.8);
+            const imgProps = doc.getImageProperties(imageDataUrl);
+            const margin = 14;
+            const pdfWidth = doc.internal.pageSize.getWidth() - (2 * margin);
+            let pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const imageY = 25;
+            let finalImageHeight = Math.min(pdfHeight, pageHeight - imageY - margin);
+            let finalImageWidth = (finalImageHeight * imgProps.width) / imgProps.height;
+            let finalImageX = (doc.internal.pageSize.getWidth() - finalImageWidth) / 2;
 
-        // Initial Load
-        document.addEventListener('DOMContentLoaded', loadProjects);
+
+            doc.addImage(imageDataUrl, 'JPEG', finalImageX, imageY, finalImageWidth, finalImageHeight);
+
+            // Page 2: Table (Always Landscape)
+            doc.addPage(undefined, 'l');
+            
+            doc.setFontSize(14);
+            doc.setFont(undefined, 'bold');
+            doc.text('LOCK OUT TAG OUT EQUIPMENT LIST', doc.internal.pageSize.getWidth() / 2, 15, { align: 'center' });
+
+            doc.setFontSize(9);
+            doc.setFont(undefined, 'normal');
+            doc.text('Description of Work:', 14, 25);
+            doc.text(descriptionOfWork, 48, 25);
+            doc.text(`Date of Reviewed: ${new Date().toLocaleDateString('en-GB')}`, doc.internal.pageSize.getWidth() - 14, 25, { align: 'right' });
+            doc.text(`Page: 1 of 1`, doc.internal.pageSize.getWidth() - 14, 32, { align: 'right' });
+
+
+            const tableData = sortedPoints.map(p => {
+                const date = p.datetime ? new Date(p.datetime) : null;
+                const formattedDate = date ? `${date.toLocaleDateString('en-GB')} ${date.toLocaleTimeString('en-GB', {hour: '2-digit', minute:'2-digit'})}` : '';
+                return [
+                    p.sequence,
+                    p.name,
+                    p.location,
+                    p.isolationType === 'Physical' ? 'X' : '', // PHYSICAL (LOTO/CTRL/NL)
+                    '', // Lock closed
+                    '', // Lock open
+                    '', // Blinded
+                    '', // Spade
+                    '', // Disconnected
+                    '', // Energized
+                    p.isolationType === 'Electrical' ? 'X' : '', // De-energized
+                    p.deviceType,
+                    p.normalPos, // Normal Run Position
+                    p.isolatedPos, // Isolation Position
+                    formattedDate, // Isolation Date/Time
+                    p.lockNo, // Isolation Tag/Lock No.
+                    p.pic, // Isolation PIC
+                    '', // De-iso Position
+                    '', // De-iso Date/Time
+                    '', // De-iso Tag/Lock No.
+                    ''  // De-iso PIC
+                ];
+            });
+
+            doc.autoTable({
+                head: [
+                    [
+                        { content: 'Isolation Points', colSpan: 3, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                        { content: 'Isolation Device Type', colSpan: 8, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                        { content: 'Normal Run', colSpan: 1, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                        { content: 'Isolation', colSpan: 4, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                        { content: 'De-Isolation', colSpan: 4, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } }
+                    ],
+                    [
+                        { content: 'NO', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Equipment Name/Tag', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Location', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'PHYSICAL (LOTO/CTRL/NL)', colSpan: 6, styles: { halign: 'center' } },
+                        { content: 'Electrical', colSpan: 2, styles: { halign: 'center' } },
+                        { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Date/Time', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Tag No./Lock No.', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'PIC', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Date/Time', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'Tag No./Lock No.', rowSpan: 2, styles: { valign: 'middle' } },
+                        { content: 'PIC', rowSpan: 2, styles: { valign: 'middle' } }
+                    ],
+                    ['Lock closed', 'Lock open', 'Blinded', 'Spade', 'Disconnected', 'Energized', 'De-energized', 'Device Type']
+                ],
+                body: tableData,
+                margin: { top: 40, right: 10, bottom: 10, left: 10 },
+                theme: 'grid',
+                headStyles: { fillColor: [255, 255, 255], textColor: 0, fontSize: 6, lineColor: 0, lineWidth: 0.1, halign: 'center' },
+                styles: { fontSize: 6, cellPadding: 1, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1 },
+                columnStyles: {
+                    0: { halign: 'center', cellWidth: 8 }, 1: { cellWidth: 30 }, 2: { cellWidth: 22 },
+                    3: { halign: 'center', cellWidth: 10 }, 4: { halign: 'center', cellWidth: 10 },
+                    5: { halign: 'center', cellWidth: 10 }, 6: { halign: 'center', cellWidth: 10 },
+                    7: { halign: 'center', cellWidth: 10 }, 8: { halign: 'center', cellWidth: 10 },
+                    9: { halign: 'center', cellWidth: 10 }, 10: { halign: 'center', cellWidth: 10 },
+                    11: { cellWidth: 15 }, 12: { cellWidth: 15 }, 13: { cellWidth: 18 }, 14: { cellWidth: 18 }, 15: { cellWidth: 15 },
+                    16: { cellWidth: 15 }, 17: { cellWidth: 18 }, 18: { cellWidth: 18 }, 19: { cellWidth: 15 }
+                }
+            });
+
+            doc.save(`${activeProjectName}-LOTO-Report.pdf`);
+            
+            exportProject(activeProjectName);
+        });
+    });
     </script>
 </body>
 </html>
