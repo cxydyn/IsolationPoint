@@ -67,7 +67,7 @@
             padding: 4px;
             border-radius: 8px;
         }
-        .pdf-thumbnail:hover {
+        .pdf-thumbnail:hover, .pdf-thumbnail.selected {
             border-color: #4f46e5;
         }
         .pdf-thumbnail canvas {
@@ -76,6 +76,8 @@
             border-radius: 4px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
+        #pdf-preview-container { cursor: grab; }
+        #pdf-preview-container:active { cursor: grabbing; }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800">
@@ -238,17 +240,44 @@
     </div>
 
     <!-- PDF Page Selector Modal -->
-    <div id="pdf-page-selector-modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-50 overflow-y-auto">
-        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-4xl m-4">
-            <div class="flex justify-between items-center mb-4">
+    <div id="pdf-page-selector-modal" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center hidden z-50 p-4">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-6xl m-4 h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 flex-shrink-0">
                 <h2 class="text-2xl font-bold">Select a Page</h2>
-                <button id="close-pdf-modal-btn" class="text-gray-500 hover:text-gray-800">&times;</button>
+                <button id="close-pdf-modal-btn" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
             </div>
-            <div id="pdf-thumbnails-container" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 max-h-[70vh] overflow-y-auto p-2 bg-gray-100 rounded">
-                <!-- Thumbnails will be injected here -->
+            <div class="flex flex-col md:flex-row gap-4 flex-grow min-h-0">
+                <!-- Thumbnails container -->
+                <div class="w-full md:w-1/4 lg:w-1/5 border-r pr-4">
+                    <h3 class="font-semibold mb-2 text-center">Pages</h3>
+                    <div id="pdf-thumbnails-container" class="grid grid-cols-2 gap-2 max-h-full overflow-y-auto">
+                        <!-- Thumbnails will be injected here -->
+                    </div>
+                </div>
+                <!-- Preview container -->
+                <div class="w-full md:w-3/4 lg:w-4/5 flex flex-col">
+                    <div id="pdf-preview-container" class="flex-grow relative bg-gray-200 rounded-lg flex items-center justify-center min-h-0 overflow-hidden">
+                        <canvas id="pdf-preview-canvas"></canvas>
+                         <!-- Zoom Controls for Preview -->
+                        <div class="absolute top-2 right-2 bg-white bg-opacity-70 rounded-md p-1 flex gap-1">
+                            <button id="zoom-in-preview-btn" class="p-1.5 rounded-md hover:bg-gray-200" title="Zoom In"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7"></path></svg></button>
+                            <button id="zoom-out-preview-btn" class="p-1.5 rounded-md hover:bg-gray-200" title="Zoom Out"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"></path></svg></button>
+                            <button id="reset-view-preview-btn" class="p-1.5 rounded-md hover:bg-gray-200" title="Reset View"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h5M20 20v-5h-5"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 12a8 8 0 018-8h.5"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12a8 8 0 01-8 8h-.5"></path></svg></button>
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center mt-4 flex-shrink-0">
+                        <div class="flex items-center gap-4">
+                            <button id="pdf-prev-btn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">Previous</button>
+                            <span id="pdf-page-info" class="font-semibold">Page 0 of 0</span>
+                            <button id="pdf-next-btn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+                        </div>
+                        <button id="select-pdf-page-btn" class="px-6 py-2 bg-indigo-600 text-white font-semibold rounded-md hover:bg-indigo-700">Select This Page</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
+
 
     <!-- Context Menu -->
     <div id="context-menu" class="context-menu">
@@ -307,18 +336,38 @@
         const pdfPageSelectorModal = document.getElementById('pdf-page-selector-modal');
         const pdfThumbnailsContainer = document.getElementById('pdf-thumbnails-container');
         const closePdfModalBtn = document.getElementById('close-pdf-modal-btn');
+        const pdfPreviewContainer = document.getElementById('pdf-preview-container');
+        const pdfPreviewCanvas = document.getElementById('pdf-preview-canvas');
+        const pdfPrevBtn = document.getElementById('pdf-prev-btn');
+        const pdfNextBtn = document.getElementById('pdf-next-btn');
+        const pdfPageInfo = document.getElementById('pdf-page-info');
+        const selectPdfPageBtn = document.getElementById('select-pdf-page-btn');
+        const zoomInPreviewBtn = document.getElementById('zoom-in-preview-btn');
+        const zoomOutPreviewBtn = document.getElementById('zoom-out-preview-btn');
+        const resetViewPreviewBtn = document.getElementById('reset-view-preview-btn');
 
         // App State
         let projects = {};
         let activeProjectName = null;
         let image = null;
         let currentContextMenuPos = { x: 0, y: 0 };
+        let currentPdf = null;
+        let currentPageNumber = 1;
+        let currentPdfProcessCallback = null;
         
-        // Transformation State
+        // Main Canvas Transformation State
         let scale = 1.0;
         let panOffset = { x: 0, y: 0 };
         let isPanning = false;
         let panStart = { x: 0, y: 0 };
+
+        // PDF Preview Transformation State
+        let previewScale = 1.0;
+        let basePreviewScale = 1.0;
+        let previewPanOffset = { x: 0, y: 0 };
+        let isPreviewPanning = false;
+        let previewPanStart = { x: 0, y: 0 };
+        let previewPageCanvas = document.createElement('canvas'); // The offscreen canvas for smooth panning
 
         /**
          * Redraws the canvas, applying current scale and pan transformations.
@@ -542,12 +591,18 @@
                 reader.onload = (event) => {
                     pdfjsLib.getDocument({ data: event.target.result }).promise.then(pdf => {
                         if (pdf.numPages > 1) {
-                            renderPdfThumbnails(pdf, processFile);
+                            currentPdf = pdf;
+                            currentPdfProcessCallback = processFile;
+                            renderPdfThumbnails();
+                            showPdfPagePreview(1, true); // true to reset view
                             pdfPageSelectorModal.classList.remove('hidden');
                         } else {
                             processSelectedPage(pdf, 1, processFile);
                         }
-                    }).catch(err => alert('Failed to process PDF file.'));
+                    }).catch(err => {
+                        console.error(err);
+                        alert('Failed to process PDF file.');
+                    });
                 };
                 reader.readAsArrayBuffer(file);
             } else {
@@ -555,11 +610,11 @@
             }
         }
 
-        function renderPdfThumbnails(pdf, callback) {
+        function renderPdfThumbnails() {
             pdfThumbnailsContainer.innerHTML = 'Rendering thumbnails...';
             const promises = [];
-            for (let i = 1; i <= pdf.numPages; i++) {
-                promises.push(pdf.getPage(i).then(page => {
+            for (let i = 1; i <= currentPdf.numPages; i++) {
+                promises.push(currentPdf.getPage(i).then(page => {
                     const viewport = page.getViewport({ scale: 1 });
                     const canvas = document.createElement('canvas');
                     const context = canvas.getContext('2d');
@@ -571,11 +626,11 @@
                     return page.render({ canvasContext: context, viewport: scaledViewport }).promise.then(() => {
                         const thumbnailWrapper = document.createElement('div');
                         thumbnailWrapper.className = 'pdf-thumbnail';
+                        thumbnailWrapper.dataset.pageNum = i;
                         thumbnailWrapper.innerHTML = `<p class="text-center font-semibold mb-1">Page ${i}</p>`;
                         thumbnailWrapper.appendChild(canvas);
                         thumbnailWrapper.onclick = () => {
-                            processSelectedPage(pdf, i, callback);
-                            pdfPageSelectorModal.classList.add('hidden');
+                            showPdfPagePreview(i, true); // true to reset view
                         };
                         return thumbnailWrapper;
                     });
@@ -585,6 +640,80 @@
             Promise.all(promises).then(thumbnails => {
                 pdfThumbnailsContainer.innerHTML = '';
                 thumbnails.forEach(thumb => pdfThumbnailsContainer.appendChild(thumb));
+                updateSelectedThumbnail();
+            });
+        }
+
+        function drawPreviewCanvas() {
+            if (!previewPageCanvas || !previewPageCanvas.width) return;
+
+            const context = pdfPreviewCanvas.getContext('2d');
+            const container = pdfPreviewContainer;
+            
+            pdfPreviewCanvas.width = container.clientWidth;
+            pdfPreviewCanvas.height = container.clientHeight;
+
+            context.clearRect(0, 0, pdfPreviewCanvas.width, pdfPreviewCanvas.height);
+            context.save();
+            
+            context.translate(
+                pdfPreviewCanvas.width / 2 + previewPanOffset.x,
+                pdfPreviewCanvas.height / 2 + previewPanOffset.y
+            );
+            
+            context.drawImage(
+                previewPageCanvas, 
+                -previewPageCanvas.width / 2, 
+                -previewPageCanvas.height / 2
+            );
+            context.restore();
+        }
+
+        function showPdfPagePreview(pageNum, reset = false) {
+            if (!currentPdf || pageNum < 1 || pageNum > currentPdf.numPages) return;
+            
+            currentPageNumber = pageNum;
+
+            currentPdf.getPage(pageNum).then(page => {
+                const previewContainer = document.getElementById('pdf-preview-container');
+                const viewport = page.getViewport({ scale: 1 });
+                
+                if (reset) {
+                    basePreviewScale = Math.min(previewContainer.clientWidth / viewport.width, previewContainer.clientHeight / viewport.height) * 0.95;
+                    previewScale = basePreviewScale;
+                    previewPanOffset = { x: 0, y: 0 };
+                }
+
+                const scaledViewport = page.getViewport({ scale: previewScale });
+                
+                previewPageCanvas.height = scaledViewport.height;
+                previewPageCanvas.width = scaledViewport.width;
+                const offscreenContext = previewPageCanvas.getContext('2d');
+
+                page.render({ canvasContext: offscreenContext, viewport: scaledViewport }).promise.then(() => {
+                    drawPreviewCanvas();
+                });
+
+                pdfPageInfo.textContent = `Page ${currentPageNumber} of ${currentPdf.numPages}`;
+                pdfPrevBtn.disabled = currentPageNumber === 1;
+                pdfNextBtn.disabled = currentPageNumber === currentPdf.numPages;
+
+                updateSelectedThumbnail();
+            });
+        }
+
+        function resetPdfPreview() {
+            showPdfPagePreview(currentPageNumber, true);
+        }
+
+        function updateSelectedThumbnail() {
+            const thumbnails = document.querySelectorAll('.pdf-thumbnail');
+            thumbnails.forEach(thumb => {
+                if (parseInt(thumb.dataset.pageNum) === currentPageNumber) {
+                    thumb.classList.add('selected');
+                } else {
+                    thumb.classList.remove('selected');
+                }
             });
         }
 
@@ -857,6 +986,36 @@
 
         zoomInBtn.addEventListener('click', () => { scale *= 1.2; redrawAll(); });
         zoomOutBtn.addEventListener('click', () => { scale /= 1.2; redrawAll(); });
+
+        pdfPrevBtn.addEventListener('click', () => showPdfPagePreview(currentPageNumber - 1, true));
+        pdfNextBtn.addEventListener('click', () => showPdfPagePreview(currentPageNumber + 1, true));
+        selectPdfPageBtn.addEventListener('click', () => {
+            if (currentPdf && currentPdfProcessCallback) {
+                processSelectedPage(currentPdf, currentPageNumber, currentPdfProcessCallback);
+                pdfPageSelectorModal.classList.add('hidden');
+            }
+        });
+
+        // PDF Preview Zoom and Pan
+        zoomInPreviewBtn.addEventListener('click', () => { previewScale *= 1.2; showPdfPagePreview(currentPageNumber); });
+        zoomOutPreviewBtn.addEventListener('click', () => { previewScale /= 1.2; showPdfPagePreview(currentPageNumber); });
+        resetViewPreviewBtn.addEventListener('click', resetPdfPreview);
+
+        pdfPreviewContainer.addEventListener('mousedown', (e) => {
+            isPreviewPanning = true;
+            previewPanStart.x = e.clientX - previewPanOffset.x;
+            previewPanStart.y = e.clientY - previewPanOffset.y;
+        });
+        pdfPreviewContainer.addEventListener('mouseup', () => isPreviewPanning = false);
+        pdfPreviewContainer.addEventListener('mouseleave', () => isPreviewPanning = false);
+        pdfPreviewContainer.addEventListener('mousemove', (e) => {
+            if (isPreviewPanning) {
+                previewPanOffset.x = e.clientX - previewPanStart.x;
+                previewPanOffset.y = e.clientY - previewPanStart.y;
+                drawPreviewCanvas();
+            }
+        });
+
 
         canvasContainer.addEventListener('mousedown', (e) => {
             if (e.target === canvas) {
