@@ -516,668 +516,663 @@
             renderProjectList();
             updatePointsList();
         }
+    
+    function deleteProject(name) {
+        if (confirm(`Are you sure you want to delete the project "${name}"?`)) {
+            delete projects[name];
+            if (activeProjectName === name) {
+                activeProjectName = null;
+                localStorage.removeItem('lastActiveIsolationProject_v4');
+                updateUIForNoProject();
+            }
+            saveProjects();
+            renderProjectList();
+        }
+    }
+    
+    function updateUIForNoProject() {
+         image = null;
+         if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+         canvasPlaceholder.style.display = 'block';
+         viewControls.classList.add('hidden');
+         projectDetailsSection.classList.add('hidden');
+         updatePointsList();
+    }
+
+    function renderProjectList() {
+        projectList.innerHTML = '';
+        Object.keys(projects).forEach(name => {
+            const item = document.createElement('div');
+            item.className = `sidebar-item flex justify-between items-center p-2 rounded-md cursor-pointer hover:bg-gray-100 ${name === activeProjectName ? 'active' : ''}`;
+            
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = name;
+            nameSpan.className = "flex-grow truncate";
+            nameSpan.onclick = () => loadProject(name);
+            
+            const buttonGroup = document.createElement('div');
+            buttonGroup.className = 'flex items-center flex-shrink-0 ml-2';
+
+            const exportBtn = document.createElement('button');
+            exportBtn.innerHTML = `<svg class="w-4 h-4 text-gray-400 hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
+            exportBtn.onclick = (e) => { e.stopPropagation(); exportProject(name); };
+            exportBtn.title = "Export Project";
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.innerHTML = `<svg class="w-4 h-4 text-gray-400 hover:text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
+            deleteBtn.onclick = (e) => { e.stopPropagation(); deleteProject(name); };
+            deleteBtn.title = "Delete Project";
+
+            item.appendChild(nameSpan);
+            buttonGroup.appendChild(exportBtn);
+            buttonGroup.appendChild(deleteBtn);
+            item.appendChild(buttonGroup);
+            projectList.appendChild(item);
+        });
+    }
+
+    // --- File Handling & Project I/O ---
+    function handleFileUpload(file) {
+        if (!file) return;
+        let defaultProjectName = projectNameInput.value.trim() || file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
         
-        function deleteProject(name) {
-            if (confirm(`Are you sure you want to delete the project "${name}"?`)) {
-                delete projects[name];
-                if (activeProjectName === name) {
-                    activeProjectName = null;
-                    localStorage.removeItem('lastActiveIsolationProject_v4');
-                    updateUIForNoProject();
+        const processFile = (dataUrl) => {
+            let finalProjectName = defaultProjectName;
+            let counter = 1;
+            while(projects[finalProjectName]) { finalProjectName = `${defaultProjectName} (${counter++})`; }
+            createProject(finalProjectName, dataUrl);
+        };
+
+        const reader = new FileReader();
+        if (file.type.startsWith('image/')) {
+            reader.onload = (event) => processFile(event.target.result);
+            reader.readAsDataURL(file);
+        } else if (file.type === 'application/pdf') {
+            reader.onload = (event) => {
+                pdfjsLib.getDocument({ data: event.target.result }).promise.then(pdf => {
+                    if (pdf.numPages > 1) {
+                        currentPdf = pdf;
+                        currentPdfProcessCallback = processFile;
+                        renderPdfThumbnails();
+                        showPdfPagePreview(1, true); // true to reset view
+                        pdfPageSelectorModal.classList.remove('hidden');
+                    } else {
+                        processSelectedPage(pdf, 1, processFile);
+                    }
+                }).catch(err => {
+                    console.error(err);
+                    alert('Failed to process PDF file.');
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        } else {
+            alert('Unsupported file format.');
+        }
+    }
+
+    function renderPdfThumbnails() {
+        pdfThumbnailsContainer.innerHTML = 'Rendering thumbnails...';
+        const promises = [];
+        for (let i = 1; i <= currentPdf.numPages; i++) {
+            promises.push(currentPdf.getPage(i).then(page => {
+                const viewport = page.getViewport({ scale: 1 });
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                const scale = 150 / viewport.width;
+                const scaledViewport = page.getViewport({ scale });
+                canvas.height = scaledViewport.height;
+                canvas.width = scaledViewport.width;
+
+                return page.render({ canvasContext: context, viewport: scaledViewport }).promise.then(() => {
+                    const thumbnailWrapper = document.createElement('div');
+                    thumbnailWrapper.className = 'pdf-thumbnail';
+                    thumbnailWrapper.dataset.pageNum = i;
+                    thumbnailWrapper.innerHTML = `<p class="text-center font-semibold mb-1">Page ${i}</p>`;
+                    thumbnailWrapper.appendChild(canvas);
+                    thumbnailWrapper.onclick = () => {
+                        showPdfPagePreview(i, true); // true to reset view
+                    };
+                    return thumbnailWrapper;
+                });
+            }));
+        }
+
+        Promise.all(promises).then(thumbnails => {
+            pdfThumbnailsContainer.innerHTML = '';
+            thumbnails.forEach(thumb => pdfThumbnailsContainer.appendChild(thumb));
+            updateSelectedThumbnail();
+        });
+    }
+
+    function drawPreviewCanvas() {
+        if (!previewPageCanvas || !previewPageCanvas.width) return;
+
+        const context = pdfPreviewCanvas.getContext('2d');
+        const container = pdfPreviewContainer;
+        
+        pdfPreviewCanvas.width = container.clientWidth;
+        pdfPreviewCanvas.height = container.clientHeight;
+
+        context.clearRect(0, 0, pdfPreviewCanvas.width, pdfPreviewCanvas.height);
+        context.save();
+        
+        context.translate(
+            pdfPreviewCanvas.width / 2 + previewPanOffset.x,
+            pdfPreviewCanvas.height / 2 + previewPanOffset.y
+        );
+        
+        context.drawImage(
+            previewPageCanvas, 
+            -previewPageCanvas.width / 2, 
+            -previewPageCanvas.height / 2
+        );
+        context.restore();
+    }
+
+    function showPdfPagePreview(pageNum, reset = false) {
+        if (!currentPdf || pageNum < 1 || pageNum > currentPdf.numPages) return;
+        
+        currentPageNumber = pageNum;
+
+        currentPdf.getPage(pageNum).then(page => {
+            const previewContainer = document.getElementById('pdf-preview-container');
+            const viewport = page.getViewport({ scale: 1 });
+            
+            if (reset) {
+                basePreviewScale = Math.min(previewContainer.clientWidth / viewport.width, previewContainer.clientHeight / viewport.height) * 0.95;
+                previewScale = basePreviewScale;
+                previewPanOffset = { x: 0, y: 0 };
+            }
+
+            const scaledViewport = page.getViewport({ scale: previewScale });
+            
+            previewPageCanvas.height = scaledViewport.height;
+            previewPageCanvas.width = scaledViewport.width;
+            const offscreenContext = previewPageCanvas.getContext('2d');
+
+            page.render({ canvasContext: offscreenContext, viewport: scaledViewport }).promise.then(() => {
+                drawPreviewCanvas();
+            });
+
+            pdfPageInfo.textContent = `Page ${currentPageNumber} of ${currentPdf.numPages}`;
+            pdfPrevBtn.disabled = currentPageNumber === 1;
+            pdfNextBtn.disabled = currentPageNumber === currentPdf.numPages;
+
+            updateSelectedThumbnail();
+        });
+    }
+
+    function resetPdfPreview() {
+        showPdfPagePreview(currentPageNumber, true);
+    }
+
+    function updateSelectedThumbnail() {
+        const thumbnails = document.querySelectorAll('.pdf-thumbnail');
+        thumbnails.forEach(thumb => {
+            if (parseInt(thumb.dataset.pageNum) === currentPageNumber) {
+                thumb.classList.add('selected');
+            } else {
+                thumb.classList.remove('selected');
+            }
+        });
+    }
+
+    function processSelectedPage(pdf, pageNumber, callback) {
+        pdf.getPage(pageNumber).then(page => {
+            const desiredWidth = 2000;
+            const viewport = page.getViewport({ scale: 1 });
+            const scale = desiredWidth / viewport.width;
+            const scaledViewport = page.getViewport({ scale });
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.height = scaledViewport.height;
+            tempCanvas.width = scaledViewport.width;
+            const tempCtx = tempCanvas.getContext('2d');
+
+            page.render({ canvasContext: tempCtx, viewport: scaledViewport }).promise.then(() => {
+                callback(tempCanvas.toDataURL('image/jpeg', 0.9));
+            });
+        });
+    }
+
+
+    function exportProject(name) {
+        const projectData = projects[name];
+        if (!projectData) return;
+
+        const jsonString = JSON.stringify(projectData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${name}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function handleProjectUpload(file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const projectData = JSON.parse(event.target.result);
+                
+                // Basic validation
+                if (!projectData.imageData || !projectData.points) {
+                    throw new Error("Invalid project file format.");
                 }
+
+                let projectName = file.name.replace(/\.json$/, '');
+                let finalProjectName = projectName;
+                let counter = 1;
+                while(projects[finalProjectName]) {
+                    finalProjectName = `${projectName} (${counter++})`;
+                }
+
+                projects[finalProjectName] = projectData;
                 saveProjects();
                 renderProjectList();
+                loadProject(finalProjectName);
+
+            } catch (error) {
+                alert(`Failed to upload project: ${error.message}`);
+            } finally {
+                uploadProjectInput.value = ''; // Reset input
             }
-        }
-        
-        function updateUIForNoProject() {
-             image = null;
-             if(ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-             canvasPlaceholder.style.display = 'block';
-             viewControls.classList.add('hidden');
-             projectDetailsSection.classList.add('hidden');
-             updatePointsList();
-        }
+        };
+        reader.readAsText(file);
+    }
 
-        function renderProjectList() {
-            projectList.innerHTML = '';
-            Object.keys(projects).forEach(name => {
-                const item = document.createElement('div');
-                item.className = `sidebar-item flex justify-between items-center p-2 rounded-md cursor-pointer hover:bg-gray-100 ${name === activeProjectName ? 'active' : ''}`;
-                
-                const nameSpan = document.createElement('span');
-                nameSpan.textContent = name;
-                nameSpan.className = "flex-grow truncate";
-                nameSpan.onclick = () => loadProject(name);
-                
-                const buttonGroup = document.createElement('div');
-                buttonGroup.className = 'flex items-center flex-shrink-0 ml-2';
-
-                const exportBtn = document.createElement('button');
-                exportBtn.innerHTML = `<svg class="w-4 h-4 text-gray-400 hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
-                exportBtn.onclick = (e) => { e.stopPropagation(); exportProject(name); };
-                exportBtn.title = "Export Project";
-
-                const deleteBtn = document.createElement('button');
-                deleteBtn.innerHTML = `<svg class="w-4 h-4 text-gray-400 hover:text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
-                deleteBtn.onclick = (e) => { e.stopPropagation(); deleteProject(name); };
-                deleteBtn.title = "Delete Project";
-
-                item.appendChild(nameSpan);
-                buttonGroup.appendChild(exportBtn);
-                buttonGroup.appendChild(deleteBtn);
-                item.appendChild(buttonGroup);
-                projectList.appendChild(item);
-            });
-        }
-
-        // --- File Handling & Project I/O ---
-        function handleFileUpload(file) {
-            if (!file) return;
-            let defaultProjectName = projectNameInput.value.trim() || file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
-            
-            const processFile = (dataUrl) => {
-                let finalProjectName = defaultProjectName;
-                let counter = 1;
-                while(projects[finalProjectName]) { finalProjectName = `${defaultProjectName} (${counter++})`; }
-                createProject(finalProjectName, dataUrl);
-            };
-
-            const reader = new FileReader();
-            if (file.type.startsWith('image/')) {
-                reader.onload = (event) => processFile(event.target.result);
-                reader.readAsDataURL(file);
-            } else if (file.type === 'application/pdf') {
-                reader.onload = (event) => {
-                    pdfjsLib.getDocument({ data: event.target.result }).promise.then(pdf => {
-                        if (pdf.numPages > 1) {
-                            currentPdf = pdf;
-                            currentPdfProcessCallback = processFile;
-                            renderPdfThumbnails();
-                            showPdfPagePreview(1, true); // true to reset view
-                            pdfPageSelectorModal.classList.remove('hidden');
-                        } else {
-                            processSelectedPage(pdf, 1, processFile);
-                        }
-                    }).catch(err => {
-                        console.error(err);
-                        alert('Failed to process PDF file.');
-                    });
-                };
-                reader.readAsArrayBuffer(file);
-            } else {
-                alert('Unsupported file format.');
-            }
-        }
-
-        function renderPdfThumbnails() {
-            pdfThumbnailsContainer.innerHTML = 'Rendering thumbnails...';
-            const promises = [];
-            for (let i = 1; i <= currentPdf.numPages; i++) {
-                promises.push(currentPdf.getPage(i).then(page => {
-                    const viewport = page.getViewport({ scale: 1 });
-                    const canvas = document.createElement('canvas');
-                    const context = canvas.getContext('2d');
-                    const scale = 150 / viewport.width;
-                    const scaledViewport = page.getViewport({ scale });
-                    canvas.height = scaledViewport.height;
-                    canvas.width = scaledViewport.width;
-
-                    return page.render({ canvasContext: context, viewport: scaledViewport }).promise.then(() => {
-                        const thumbnailWrapper = document.createElement('div');
-                        thumbnailWrapper.className = 'pdf-thumbnail';
-                        thumbnailWrapper.dataset.pageNum = i;
-                        thumbnailWrapper.innerHTML = `<p class="text-center font-semibold mb-1">Page ${i}</p>`;
-                        thumbnailWrapper.appendChild(canvas);
-                        thumbnailWrapper.onclick = () => {
-                            showPdfPagePreview(i, true); // true to reset view
-                        };
-                        return thumbnailWrapper;
-                    });
-                }));
-            }
-
-            Promise.all(promises).then(thumbnails => {
-                pdfThumbnailsContainer.innerHTML = '';
-                thumbnails.forEach(thumb => pdfThumbnailsContainer.appendChild(thumb));
-                updateSelectedThumbnail();
-            });
-        }
-
-        function drawPreviewCanvas() {
-            if (!previewPageCanvas || !previewPageCanvas.width) return;
-
-            const context = pdfPreviewCanvas.getContext('2d');
-            const container = pdfPreviewContainer;
-            
-            pdfPreviewCanvas.width = container.clientWidth;
-            pdfPreviewCanvas.height = container.clientHeight;
-
-            context.clearRect(0, 0, pdfPreviewCanvas.width, pdfPreviewCanvas.height);
-            context.save();
-            
-            context.translate(
-                pdfPreviewCanvas.width / 2 + previewPanOffset.x,
-                pdfPreviewCanvas.height / 2 + previewPanOffset.y
-            );
-            
-            context.drawImage(
-                previewPageCanvas, 
-                -previewPageCanvas.width / 2, 
-                -previewPageCanvas.height / 2
-            );
-            context.restore();
-        }
-
-        function showPdfPagePreview(pageNum, reset = false) {
-            if (!currentPdf || pageNum < 1 || pageNum > currentPdf.numPages) return;
-            
-            currentPageNumber = pageNum;
-
-            currentPdf.getPage(pageNum).then(page => {
-                const previewContainer = document.getElementById('pdf-preview-container');
-                const viewport = page.getViewport({ scale: 1 });
-                
-                if (reset) {
-                    basePreviewScale = Math.min(previewContainer.clientWidth / viewport.width, previewContainer.clientHeight / viewport.height) * 0.95;
-                    previewScale = basePreviewScale;
-                    previewPanOffset = { x: 0, y: 0 };
-                }
-
-                const scaledViewport = page.getViewport({ scale: previewScale });
-                
-                previewPageCanvas.height = scaledViewport.height;
-                previewPageCanvas.width = scaledViewport.width;
-                const offscreenContext = previewPageCanvas.getContext('2d');
-
-                page.render({ canvasContext: offscreenContext, viewport: scaledViewport }).promise.then(() => {
-                    drawPreviewCanvas();
-                });
-
-                pdfPageInfo.textContent = `Page ${currentPageNumber} of ${currentPdf.numPages}`;
-                pdfPrevBtn.disabled = currentPageNumber === 1;
-                pdfNextBtn.disabled = currentPageNumber === currentPdf.numPages;
-
-                updateSelectedThumbnail();
-            });
-        }
-
-        function resetPdfPreview() {
-            showPdfPagePreview(currentPageNumber, true);
-        }
-
-        function updateSelectedThumbnail() {
-            const thumbnails = document.querySelectorAll('.pdf-thumbnail');
-            thumbnails.forEach(thumb => {
-                if (parseInt(thumb.dataset.pageNum) === currentPageNumber) {
-                    thumb.classList.add('selected');
-                } else {
-                    thumb.classList.remove('selected');
-                }
-            });
-        }
-
-        function processSelectedPage(pdf, pageNumber, callback) {
-            pdf.getPage(pageNumber).then(page => {
-                const desiredWidth = 2000;
-                const viewport = page.getViewport({ scale: 1 });
-                const scale = desiredWidth / viewport.width;
-                const scaledViewport = page.getViewport({ scale });
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.height = scaledViewport.height;
-                tempCanvas.width = scaledViewport.width;
-                const tempCtx = tempCanvas.getContext('2d');
-
-                page.render({ canvasContext: tempCtx, viewport: scaledViewport }).promise.then(() => {
-                    callback(tempCanvas.toDataURL('image/jpeg', 0.9));
-                });
-            });
-        }
-
-
-        function exportProject(name) {
-            const projectData = projects[name];
-            if (!projectData) return;
-
-            const jsonString = JSON.stringify(projectData, null, 2);
-            const blob = new Blob([jsonString], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${name}.json`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
-
-        function handleProjectUpload(file) {
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                try {
-                    const projectData = JSON.parse(event.target.result);
-                    
-                    // Basic validation
-                    if (!projectData.imageData || !projectData.points) {
-                        throw new Error("Invalid project file format.");
-                    }
-
-                    let projectName = file.name.replace(/\.json$/, '');
-                    let finalProjectName = projectName;
-                    let counter = 1;
-                    while(projects[finalProjectName]) {
-                        finalProjectName = `${projectName} (${counter++})`;
-                    }
-
-                    projects[finalProjectName] = projectData;
-                    saveProjects();
-                    renderProjectList();
-                    loadProject(finalProjectName);
-
-                } catch (error) {
-                    alert(`Failed to upload project: ${error.message}`);
-                } finally {
-                    uploadProjectInput.value = ''; // Reset input
-                }
-            };
-            reader.readAsText(file);
-        }
-
-        // --- UI Updates ---
-        function updatePointsList() {
-            if (!activeProjectName || !projects[activeProjectName]) {
-                pointsList.innerHTML = '';
-                noPointsMessage.style.display = 'block';
-                return;
-            }
-            const currentPoints = projects[activeProjectName].points.sort((a,b) => a.sequence - b.sequence);
+    // --- UI Updates ---
+    function updatePointsList() {
+        if (!activeProjectName || !projects[activeProjectName]) {
             pointsList.innerHTML = '';
-            if (currentPoints.length === 0) {
-                noPointsMessage.style.display = 'block';
-                return;
-            }
-            noPointsMessage.style.display = 'none';
+            noPointsMessage.style.display = 'block';
+            return;
+        }
+        const currentPoints = projects[activeProjectName].points.sort((a,b) => a.sequence - b.sequence);
+        pointsList.innerHTML = '';
+        if (currentPoints.length === 0) {
+            noPointsMessage.style.display = 'block';
+            return;
+        }
+        noPointsMessage.style.display = 'none';
 
-            currentPoints.forEach(point => {
-                const statusColor = point.status === 'isolated' ? 'red' : 'green';
-                const listItem = document.createElement('div');
-                listItem.className = `p-3 bg-gray-50 border-l-4 border-${statusColor}-500 rounded-r-lg cursor-pointer hover:bg-gray-100`;
-                listItem.dataset.id = point.id;
-                listItem.innerHTML = `
-                    <div class="flex justify-between items-start">
-                        <p class="font-bold text-gray-800 truncate" title="${point.name}">${point.name}</p>
-                        <span class="text-sm font-bold flex-shrink-0 ml-2 w-8 h-8 flex items-center justify-center bg-gray-200 text-gray-700 rounded-full">${point.sequence || '?'}</span>
-                    </div>
-                    <p class="text-xs text-gray-600 mt-1 truncate">Location: ${point.location || 'N/A'}</p>
-                    <p class="text-xs text-gray-500 mt-1 truncate">PIC: ${point.pic || 'N/A'}</p>
-                `;
-                listItem.addEventListener('click', () => openModal(point.id));
-                pointsList.appendChild(listItem);
+        currentPoints.forEach(point => {
+            const statusColor = point.status === 'isolated' ? 'red' : 'green';
+            const listItem = document.createElement('div');
+            listItem.className = `p-3 bg-gray-50 border-l-4 border-${statusColor}-500 rounded-r-lg cursor-pointer hover:bg-gray-100`;
+            listItem.dataset.id = point.id;
+            listItem.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <p class="font-bold text-gray-800 truncate" title="${point.name}">${point.name}</p>
+                    <span class="text-sm font-bold flex-shrink-0 ml-2 w-8 h-8 flex items-center justify-center bg-gray-200 text-gray-700 rounded-full">${point.sequence || '?'}</span>
+                </div>
+                <p class="text-xs text-gray-600 mt-1 truncate">Location: ${point.location || 'N/A'}</p>
+                <p class="text-xs text-gray-500 mt-1 truncate">PIC: ${point.pic || 'N/A'}</p>
+            `;
+            listItem.addEventListener('click', () => openModal(point.id));
+            pointsList.appendChild(listItem);
+        });
+    }
+
+    function updateMarkers() {
+        markerContainer.innerHTML = '';
+        if (!image || !activeProjectName) return;
+
+        projects[activeProjectName].points.forEach(point => {
+            const pos = getTransformedPoint(point.x, point.y);
+            const marker = document.createElement('div');
+            marker.className = 'marker';
+            marker.dataset.id = point.id;
+            marker.style.backgroundColor = point.status === 'isolated' ? '#DC2626' : '#16A34A';
+            marker.style.left = `${pos.x - 14}px`;
+            marker.style.top = `${pos.y - 14}px`;
+            marker.textContent = point.sequence || point.id;
+            marker.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openModal(point.id);
+            });
+            markerContainer.appendChild(marker);
+        });
+    }
+    
+    // --- Modal & Form Logic ---
+    function openModal(id = null) {
+        contextMenu.style.display = 'none';
+        pointForm.reset();
+        const currentPoints = projects[activeProjectName].points;
+        if (id) {
+            const point = currentPoints.find(p => p.id === id);
+            if (!point) return;
+            modalTitle.textContent = `Edit Isolation Point #${point.sequence || id}`;
+            pointIdInput.value = point.id;
+            pointSequenceInput.value = point.sequence || '';
+            pointNameInput.value = point.name || '';
+            pointLocationInput.value = point.location || '';
+            pointDeviceTypeInput.value = point.deviceType || '';
+            pointIsolationTypeInput.value = point.isolationType || 'Electrical';
+            pointStatusInput.value = point.status || 'isolated';
+            pointNormalPosInput.value = point.normalPos || '';
+            pointIsolatedPosInput.value = point.isolatedPos || '';
+            pointLockNoInput.value = point.lockNo || '';
+            pointPicInput.value = point.pic || '';
+            pointDatetimeInput.value = point.datetime || '';
+            deletePointBtn.classList.remove('hidden');
+        } else {
+            const newId = currentPoints.length > 0 ? Math.max(...currentPoints.map(p => p.id)) + 1 : 1;
+            const nextSequence = currentPoints.length > 0 ? Math.max(...currentPoints.map(p => parseInt(p.sequence) || 0)) + 1 : 1;
+            modalTitle.textContent = 'Add New Isolation Point';
+            pointIdInput.value = newId;
+            pointSequenceInput.value = nextSequence;
+            pointStatusInput.value = 'isolated';
+            pointDatetimeInput.value = new Date().toISOString().slice(0, 16);
+            deletePointBtn.classList.add('hidden');
+        }
+        pointModal.classList.remove('hidden');
+        pointNameInput.focus();
+    }
+
+    function closeModal() {
+        pointModal.classList.add('hidden');
+    }
+
+    pointForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const id = parseInt(pointIdInput.value);
+        const pointData = {
+            id,
+            sequence: parseInt(pointSequenceInput.value) || 0,
+            name: pointNameInput.value,
+            location: pointLocationInput.value,
+            deviceType: pointDeviceTypeInput.value,
+            isolationType: pointIsolationTypeInput.value,
+            status: pointStatusInput.value,
+            normalPos: pointNormalPosInput.value,
+            isolatedPos: pointIsolatedPosInput.value,
+            lockNo: pointLockNoInput.value,
+            pic: pointPicInput.value,
+            datetime: pointDatetimeInput.value,
+        };
+
+        const currentPoints = projects[activeProjectName].points;
+        const existingPointIndex = currentPoints.findIndex(p => p.id === id);
+
+        if (existingPointIndex > -1) {
+            currentPoints[existingPointIndex] = { ...currentPoints[existingPointIndex], ...pointData };
+        } else {
+            currentPoints.push({
+                ...pointData,
+                x: currentContextMenuPos.x,
+                y: currentContextMenuPos.y,
             });
         }
-
-        function updateMarkers() {
-            markerContainer.innerHTML = '';
-            if (!image || !activeProjectName) return;
-
-            projects[activeProjectName].points.forEach(point => {
-                const pos = getTransformedPoint(point.x, point.y);
-                const marker = document.createElement('div');
-                marker.className = 'marker';
-                marker.dataset.id = point.id;
-                marker.style.backgroundColor = point.status === 'isolated' ? '#DC2626' : '#16A34A';
-                marker.style.left = `${pos.x - 14}px`;
-                marker.style.top = `${pos.y - 14}px`;
-                marker.textContent = point.sequence || point.id;
-                marker.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    openModal(point.id);
-                });
-                markerContainer.appendChild(marker);
-            });
-        }
-        
-        // --- Modal & Form Logic ---
-        function openModal(id = null) {
-            contextMenu.style.display = 'none';
-            pointForm.reset();
-            const currentPoints = projects[activeProjectName].points;
-            if (id) {
-                const point = currentPoints.find(p => p.id === id);
-                if (!point) return;
-                modalTitle.textContent = `Edit Isolation Point #${point.sequence || id}`;
-                pointIdInput.value = point.id;
-                pointSequenceInput.value = point.sequence || '';
-                pointNameInput.value = point.name || '';
-                pointLocationInput.value = point.location || '';
-                pointDeviceTypeInput.value = point.deviceType || '';
-                pointIsolationTypeInput.value = point.isolationType || 'Electrical';
-                pointStatusInput.value = point.status || 'isolated';
-                pointNormalPosInput.value = point.normalPos || '';
-                pointIsolatedPosInput.value = point.isolatedPos || '';
-                pointLockNoInput.value = point.lockNo || '';
-                pointPicInput.value = point.pic || '';
-                pointDatetimeInput.value = point.datetime || '';
-                deletePointBtn.classList.remove('hidden');
-            } else {
-                const newId = currentPoints.length > 0 ? Math.max(...currentPoints.map(p => p.id)) + 1 : 1;
-                const nextSequence = currentPoints.length > 0 ? Math.max(...currentPoints.map(p => parseInt(p.sequence) || 0)) + 1 : 1;
-                modalTitle.textContent = 'Add New Isolation Point';
-                pointIdInput.value = newId;
-                pointSequenceInput.value = nextSequence;
-                pointStatusInput.value = 'isolated';
-                pointDatetimeInput.value = new Date().toISOString().slice(0, 16);
-                deletePointBtn.classList.add('hidden');
-            }
-            pointModal.classList.remove('hidden');
-            pointNameInput.focus();
-        }
-
-        function closeModal() {
-            pointModal.classList.add('hidden');
-        }
-
-        pointForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const id = parseInt(pointIdInput.value);
-            const pointData = {
-                id,
-                sequence: parseInt(pointSequenceInput.value) || 0,
-                name: pointNameInput.value,
-                location: pointLocationInput.value,
-                deviceType: pointDeviceTypeInput.value,
-                isolationType: pointIsolationTypeInput.value,
-                status: pointStatusInput.value,
-                normalPos: pointNormalPosInput.value,
-                isolatedPos: pointIsolatedPosInput.value,
-                lockNo: pointLockNoInput.value,
-                pic: pointPicInput.value,
-                datetime: pointDatetimeInput.value,
-            };
-
-            const currentPoints = projects[activeProjectName].points;
-            const existingPointIndex = currentPoints.findIndex(p => p.id === id);
-
-            if (existingPointIndex > -1) {
-                currentPoints[existingPointIndex] = { ...currentPoints[existingPointIndex], ...pointData };
-            } else {
-                currentPoints.push({
-                    ...pointData,
-                    x: currentContextMenuPos.x,
-                    y: currentContextMenuPos.y,
-                });
-            }
+        saveProjects();
+        updatePointsList();
+        updateMarkers();
+        closeModal();
+    });
+    
+    deletePointBtn.addEventListener('click', () => {
+        const id = parseInt(pointIdInput.value);
+        if (confirm(`Are you sure you want to delete this Isolation Point?`)) {
+            projects[activeProjectName].points = projects[activeProjectName].points.filter(p => p.id !== id);
             saveProjects();
             updatePointsList();
             updateMarkers();
             closeModal();
-        });
-        
-        deletePointBtn.addEventListener('click', () => {
-            const id = parseInt(pointIdInput.value);
-            if (confirm(`Are you sure you want to delete this Isolation Point?`)) {
-                projects[activeProjectName].points = projects[activeProjectName].points.filter(p => p.id !== id);
-                saveProjects();
-                updatePointsList();
-                updateMarkers();
-                closeModal();
-            }
-        });
-
-        // --- Event Listeners & Initialisation ---
-
-        // Initial Load
-        loadProjects();
-
-        window.addEventListener('beforeunload', () => {
-            localStorage.removeItem('isolationProjects_v4');
-            localStorage.removeItem('lastActiveIsolationProject_v4');
-        });
-
-        // Setup event listeners
-        window.addEventListener('resize', resetView); // Recalculate fit on resize
-        closeModalBtn.addEventListener('click', closeModal);
-        pointModal.addEventListener('click', (e) => e.target === pointModal && closeModal());
-        closePdfModalBtn.addEventListener('click', () => pdfPageSelectorModal.classList.add('hidden'));
-
-        resetViewBtn.addEventListener('click', resetView);
-
-        sldUpload.addEventListener('change', (e) => handleFileUpload(e.target.files[0]));
-        createProjectBtn.addEventListener('click', () => {
-             const name = projectNameInput.value.trim();
-             if (name) { sldUpload.click(); } 
-             else { alert("Please enter a project name first."); }
-        });
-
-        uploadProjectInput.addEventListener('change', (e) => handleProjectUpload(e.target.files[0]));
-
-        projectWorkDescInput.addEventListener('change', (e) => {
-            if (activeProjectName && projects[activeProjectName]) {
-                projects[activeProjectName].descriptionOfWork = e.target.value;
-                saveProjects();
-            }
-        });
-
-        fallbackUploadInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if(file) {
-                 handleFileUpload(file);
-                 fallbackUploadSection.classList.add('hidden');
-            }
-        });
-        
-        canvasContainer.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            if (!image) return;
-            const rect = canvas.getBoundingClientRect();
-            const inversePos = getInverseTransformedPoint(e.clientX - rect.left, e.clientY - rect.top);
-            if (inversePos.x >= 0 && inversePos.x <= 1 && inversePos.y >= 0 && inversePos.y <= 1) {
-                currentContextMenuPos = inversePos;
-                contextMenu.style.top = `${e.pageY}px`;
-                contextMenu.style.left = `${e.pageX}px`;
-                contextMenu.style.display = 'block';
-            }
-        });
-
-        document.addEventListener('click', (e) => !contextMenu.contains(e.target) && (contextMenu.style.display = 'none'));
-        addPointMenuBtn.addEventListener('click', () => openModal());
-
-        zoomInBtn.addEventListener('click', () => { scale *= 1.2; redrawAll(); });
-        zoomOutBtn.addEventListener('click', () => { scale /= 1.2; redrawAll(); });
-
-        pdfPrevBtn.addEventListener('click', () => showPdfPagePreview(currentPageNumber - 1, true));
-        pdfNextBtn.addEventListener('click', () => showPdfPagePreview(currentPageNumber + 1, true));
-        selectPdfPageBtn.addEventListener('click', () => {
-            if (currentPdf && currentPdfProcessCallback) {
-                processSelectedPage(currentPdf, currentPageNumber, currentPdfProcessCallback);
-                pdfPageSelectorModal.classList.add('hidden');
-            }
-        });
-
-        // PDF Preview Zoom and Pan
-        zoomInPreviewBtn.addEventListener('click', () => { previewScale *= 1.2; showPdfPagePreview(currentPageNumber); });
-        zoomOutPreviewBtn.addEventListener('click', () => { previewScale /= 1.2; showPdfPagePreview(currentPageNumber); });
-        resetViewPreviewBtn.addEventListener('click', resetPdfPreview);
-
-        pdfPreviewContainer.addEventListener('mousedown', (e) => {
-            isPreviewPanning = true;
-            previewPanStart.x = e.clientX - previewPanOffset.x;
-            previewPanStart.y = e.clientY - previewPanOffset.y;
-        });
-        pdfPreviewContainer.addEventListener('mouseup', () => isPreviewPanning = false);
-        pdfPreviewContainer.addEventListener('mouseleave', () => isPreviewPanning = false);
-        pdfPreviewContainer.addEventListener('mousemove', (e) => {
-            if (isPreviewPanning) {
-                previewPanOffset.x = e.clientX - previewPanStart.x;
-                previewPanOffset.y = e.clientY - previewPanStart.y;
-                drawPreviewCanvas();
-            }
-        });
-
-
-        canvasContainer.addEventListener('mousedown', (e) => {
-            if (e.target === canvas) {
-                isPanning = true;
-                panStart.x = e.clientX - panOffset.x;
-                panStart.y = e.clientY - panOffset.y;
-            }
-        });
-        canvasContainer.addEventListener('mouseup', () => isPanning = false);
-        canvasContainer.addEventListener('mouseleave', () => isPanning = false);
-        canvasContainer.addEventListener('mousemove', (e) => {
-            if (isPanning) {
-                panOffset.x = e.clientX - panStart.x;
-                panOffset.y = e.clientY - panStart.y;
-                redrawAll();
-            }
-        });
-        
-        // --- Report Generation ---
-        printReportBtn.addEventListener('click',  () => {
-            if (!image || !activeProjectName) return;
-
-            const isDrawingLandscape = projects[activeProjectName].isDrawingLandscape;
-            const doc = new jsPDF({ orientation: isDrawingLandscape ? 'landscape' : 'portrait' });
-
-            const sortedPoints = [...projects[activeProjectName].points].sort((a, b) => a.sequence - b.sequence);
-            const descriptionOfWork = projects[activeProjectName].descriptionOfWork || 'N/A';
-
-            // Page 1: Image
-            doc.setFontSize(12);
-            doc.setFont(undefined, 'bold');
-            doc.text(`Attachment: Marked Drawing for ${activeProjectName}`, doc.internal.pageSize.getWidth() / 2, 15, { align: 'center' });
-            
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = image.width;
-            tempCanvas.height = image.height;
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCtx.drawImage(image, 0, 0);
-            
-            sortedPoints.forEach(point => {
-                const x = point.x * tempCanvas.width;
-                const y = point.y * tempCanvas.height;
-                const radius = Math.min(tempCanvas.width, tempCanvas.height) * 0.012;
-                tempCtx.fillStyle = '#DC2626'; // Always red for LOTO
-                tempCtx.beginPath();
-                tempCtx.arc(x, y, radius, 0, 2 * Math.PI);
-                tempCtx.fill();
-                tempCtx.strokeStyle = 'white';
-                tempCtx.lineWidth = radius * 0.15;
-                tempCtx.stroke();
-                tempCtx.fillStyle = 'white';
-                tempCtx.font = `bold ${radius}px Inter`;
-                tempCtx.textAlign = 'center';
-                tempCtx.textBaseline = 'middle';
-                tempCtx.fillText(point.sequence, x, y);
-            });
-            
-            const imageDataUrl = tempCanvas.toDataURL('image/jpeg', 0.8);
-            const imgProps = doc.getImageProperties(imageDataUrl);
-            const margin = 14;
-            const pdfWidth = doc.internal.pageSize.getWidth() - (2 * margin);
-            let pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-            const pageHeight = doc.internal.pageSize.getHeight();
-            const imageY = 25;
-            let finalImageHeight = Math.min(pdfHeight, pageHeight - imageY - margin);
-            let finalImageWidth = (finalImageHeight * imgProps.width) / imgProps.height;
-            let finalImageX = (doc.internal.pageSize.getWidth() - finalImageWidth) / 2;
-
-
-            doc.addImage(imageDataUrl, 'JPEG', finalImageX, imageY, finalImageWidth, finalImageHeight);
-
-            // Page 2: Table (Always Landscape)
-            doc.addPage(undefined, 'l');
-            
-            doc.setFontSize(14);
-            doc.setFont(undefined, 'bold');
-            doc.text('LOCK OUT TAG OUT EQUIPMENT LIST', doc.internal.pageSize.getWidth() / 2, 15, { align: 'center' });
-
-            doc.setFontSize(9);
-            doc.setFont(undefined, 'normal');
-            doc.text('Description of Work:', 14, 25);
-            doc.text(descriptionOfWork, 48, 25);
-            doc.text(`Date of Reviewed: ${new Date().toLocaleDateString('en-GB')}`, doc.internal.pageSize.getWidth() - 14, 25, { align: 'right' });
-            doc.text(`Page: 1 of 1`, doc.internal.pageSize.getWidth() - 14, 32, { align: 'right' });
-
-
-            const tableData = sortedPoints.map(p => {
-                const date = p.datetime ? new Date(p.datetime) : null;
-                const formattedDate = date ? `${date.toLocaleDateString('en-GB')} ${date.toLocaleTimeString('en-GB', {hour: '2-digit', minute:'2-digit'})}` : '';
-                return [
-                    p.sequence,
-                    p.name,
-                    p.location,
-                    p.isolationType === 'Physical' ? 'X' : '', // PHYSICAL (LOTO/CTRL/NL)
-                    '', // Lock closed
-                    '', // Lock open
-                    '', // Blinded
-                    '', // Spade
-                    '', // Disconnected
-                    '', // Energized
-                    p.isolationType === 'Electrical' ? 'X' : '', // De-energized
-                    p.deviceType,
-                    p.normalPos, // Normal Run Position
-                    p.isolatedPos, // Isolation Position
-                    formattedDate, // Isolation Date/Time
-                    p.lockNo, // Isolation Tag/Lock No.
-                    p.pic, // Isolation PIC
-                    '', // De-iso Position
-                    '', // De-iso Date/Time
-                    '', // De-iso Tag/Lock No.
-                    ''  // De-iso PIC
-                ];
-            });
-
-            doc.autoTable({
-                head: [
-                    [
-                        { content: 'Isolation Points', colSpan: 3, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
-                        { content: 'Isolation Device Type', colSpan: 8, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
-                        { content: 'Normal Run', colSpan: 1, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
-                        { content: 'Isolation', colSpan: 4, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
-                        { content: 'De-Isolation', colSpan: 4, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } }
-                    ],
-                    [
-                        { content: 'NO', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Equipment Name/Tag', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Location', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'PHYSICAL (LOTO/CTRL/NL)', colSpan: 6, styles: { halign: 'center' } },
-                        { content: 'Electrical', colSpan: 2, styles: { halign: 'center' } },
-                        { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Date/Time', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Tag No./Lock No.', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'PIC', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Date/Time', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'Tag No./Lock No.', rowSpan: 2, styles: { valign: 'middle' } },
-                        { content: 'PIC', rowSpan: 2, styles: { valign: 'middle' } }
-                    ],
-                    ['Lock closed', 'Lock open', 'Blinded', 'Spade', 'Disconnected', 'Energized', 'De-energized', 'Device Type']
-                ],
-                body: tableData,
-                margin: { top: 40, right: 10, bottom: 10, left: 10 },
-                theme: 'grid',
-                headStyles: { fillColor: [255, 255, 255], textColor: 0, fontSize: 6, lineColor: 0, lineWidth: 0.1, halign: 'center' },
-                styles: { fontSize: 6, cellPadding: 1, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1 },
-                columnStyles: {
-                    0: { halign: 'center', cellWidth: 8 }, 1: { cellWidth: 30 }, 2: { cellWidth: 22 },
-                    3: { halign: 'center', cellWidth: 10 }, 4: { halign: 'center', cellWidth: 10 },
-                    5: { halign: 'center', cellWidth: 10 }, 6: { halign: 'center', cellWidth: 10 },
-                    7: { halign: 'center', cellWidth: 10 }, 8: { halign: 'center', cellWidth: 10 },
-                    9: { halign: 'center', cellWidth: 10 }, 10: { halign: 'center', cellWidth: 10 },
-                    11: { cellWidth: 15 }, 12: { cellWidth: 15 }, 13: { cellWidth: 18 }, 14: { cellWidth: 18 }, 15: { cellWidth: 15 },
-                    16: { cellWidth: 15 }, 17: { cellWidth: 18 }, 18: { cellWidth: 18 }, 19: { cellWidth: 15 }
-                }
-            });
-
-            doc.save(`${activeProjectName}-LOTO-Report.pdf`);
-            
-            exportProject(activeProjectName);
-        });
+        }
     });
-    </script>
+
+    // --- Event Listeners & Initialisation ---
+
+    // Initial Load
+    loadProjects();
+
+    // Setup event listeners
+    window.addEventListener('resize', resetView); // Recalculate fit on resize
+    closeModalBtn.addEventListener('click', closeModal);
+    pointModal.addEventListener('click', (e) => e.target === pointModal && closeModal());
+    closePdfModalBtn.addEventListener('click', () => pdfPageSelectorModal.classList.add('hidden'));
+
+    resetViewBtn.addEventListener('click', resetView);
+
+    sldUpload.addEventListener('change', (e) => handleFileUpload(e.target.files[0]));
+    createProjectBtn.addEventListener('click', () => {
+         const name = projectNameInput.value.trim();
+         if (name) { sldUpload.click(); } 
+         else { alert("Please enter a project name first."); }
+    });
+
+    uploadProjectInput.addEventListener('change', (e) => handleProjectUpload(e.target.files[0]));
+
+    projectWorkDescInput.addEventListener('change', (e) => {
+        if (activeProjectName && projects[activeProjectName]) {
+            projects[activeProjectName].descriptionOfWork = e.target.value;
+            saveProjects();
+        }
+    });
+
+    fallbackUploadInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if(file) {
+             handleFileUpload(file);
+             fallbackUploadSection.classList.add('hidden');
+        }
+    });
+    
+    canvasContainer.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (!image) return;
+        const rect = canvas.getBoundingClientRect();
+        const inversePos = getInverseTransformedPoint(e.clientX - rect.left, e.clientY - rect.top);
+        if (inversePos.x >= 0 && inversePos.x <= 1 && inversePos.y >= 0 && inversePos.y <= 1) {
+            currentContextMenuPos = inversePos;
+            contextMenu.style.top = `${e.pageY}px`;
+            contextMenu.style.left = `${e.pageX}px`;
+            contextMenu.style.display = 'block';
+        }
+    });
+
+    document.addEventListener('click', (e) => !contextMenu.contains(e.target) && (contextMenu.style.display = 'none'));
+    addPointMenuBtn.addEventListener('click', () => openModal());
+
+    zoomInBtn.addEventListener('click', () => { scale *= 1.2; redrawAll(); });
+    zoomOutBtn.addEventListener('click', () => { scale /= 1.2; redrawAll(); });
+
+    pdfPrevBtn.addEventListener('click', () => showPdfPagePreview(currentPageNumber - 1, true));
+    pdfNextBtn.addEventListener('click', () => showPdfPagePreview(currentPageNumber + 1, true));
+    selectPdfPageBtn.addEventListener('click', () => {
+        if (currentPdf && currentPdfProcessCallback) {
+            processSelectedPage(currentPdf, currentPageNumber, currentPdfProcessCallback);
+            pdfPageSelectorModal.classList.add('hidden');
+        }
+    });
+
+    // PDF Preview Zoom and Pan
+    zoomInPreviewBtn.addEventListener('click', () => { previewScale *= 1.2; showPdfPagePreview(currentPageNumber); });
+    zoomOutPreviewBtn.addEventListener('click', () => { previewScale /= 1.2; showPdfPagePreview(currentPageNumber); });
+    resetViewPreviewBtn.addEventListener('click', resetPdfPreview);
+
+    pdfPreviewContainer.addEventListener('mousedown', (e) => {
+        isPreviewPanning = true;
+        previewPanStart.x = e.clientX - previewPanOffset.x;
+        previewPanStart.y = e.clientY - previewPanOffset.y;
+    });
+    pdfPreviewContainer.addEventListener('mouseup', () => isPreviewPanning = false);
+    pdfPreviewContainer.addEventListener('mouseleave', () => isPreviewPanning = false);
+    pdfPreviewContainer.addEventListener('mousemove', (e) => {
+        if (isPreviewPanning) {
+            previewPanOffset.x = e.clientX - previewPanStart.x;
+            previewPanOffset.y = e.clientY - previewPanStart.y;
+            drawPreviewCanvas();
+        }
+    });
+
+
+    canvasContainer.addEventListener('mousedown', (e) => {
+        if (e.target === canvas) {
+            isPanning = true;
+            panStart.x = e.clientX - panOffset.x;
+            panStart.y = e.clientY - panOffset.y;
+        }
+    });
+    canvasContainer.addEventListener('mouseup', () => isPanning = false);
+    canvasContainer.addEventListener('mouseleave', () => isPanning = false);
+    canvasContainer.addEventListener('mousemove', (e) => {
+        if (isPanning) {
+            panOffset.x = e.clientX - panStart.x;
+            panOffset.y = e.clientY - panStart.y;
+            redrawAll();
+        }
+    });
+    
+    // --- Report Generation ---
+    printReportBtn.addEventListener('click',  () => {
+        if (!image || !activeProjectName) return;
+
+        const isDrawingLandscape = projects[activeProjectName].isDrawingLandscape;
+        const doc = new jsPDF({ orientation: isDrawingLandscape ? 'landscape' : 'portrait' });
+
+        const sortedPoints = [...projects[activeProjectName].points].sort((a, b) => a.sequence - b.sequence);
+        const descriptionOfWork = projects[activeProjectName].descriptionOfWork || 'N/A';
+
+        // Page 1: Image
+        doc.setFontSize(12);
+        doc.setFont(undefined, 'bold');
+        doc.text(`Attachment: Marked Drawing for ${activeProjectName}`, doc.internal.pageSize.getWidth() / 2, 15, { align: 'center' });
+        
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = image.width;
+        tempCanvas.height = image.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(image, 0, 0);
+        
+        sortedPoints.forEach(point => {
+            const x = point.x * tempCanvas.width;
+            const y = point.y * tempCanvas.height;
+            const radius = Math.min(tempCanvas.width, tempCanvas.height) * 0.012;
+            tempCtx.fillStyle = '#DC2626'; // Always red for LOTO
+            tempCtx.beginPath();
+            tempCtx.arc(x, y, radius, 0, 2 * Math.PI);
+            tempCtx.fill();
+            tempCtx.strokeStyle = 'white';
+            tempCtx.lineWidth = radius * 0.15;
+            tempCtx.stroke();
+            tempCtx.fillStyle = 'white';
+            tempCtx.font = `bold ${radius}px Inter`;
+            tempCtx.textAlign = 'center';
+            tempCtx.textBaseline = 'middle';
+            tempCtx.fillText(point.sequence, x, y);
+        });
+        
+        const imageDataUrl = tempCanvas.toDataURL('image/jpeg', 0.8);
+        const imgProps = doc.getImageProperties(imageDataUrl);
+        const margin = 14;
+        const pdfWidth = doc.internal.pageSize.getWidth() - (2 * margin);
+        let pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const imageY = 25;
+        let finalImageHeight = Math.min(pdfHeight, pageHeight - imageY - margin);
+        let finalImageWidth = (finalImageHeight * imgProps.width) / imgProps.height;
+        let finalImageX = (doc.internal.pageSize.getWidth() - finalImageWidth) / 2;
+
+
+        doc.addImage(imageDataUrl, 'JPEG', finalImageX, imageY, finalImageWidth, finalImageHeight);
+
+        // Page 2: Table (Always Landscape)
+        doc.addPage(undefined, 'l');
+        
+        doc.setFontSize(14);
+        doc.setFont(undefined, 'bold');
+        doc.text('LOCK OUT TAG OUT EQUIPMENT LIST', doc.internal.pageSize.getWidth() / 2, 15, { align: 'center' });
+
+        doc.setFontSize(9);
+        doc.setFont(undefined, 'normal');
+        doc.text('Description of Work:', 14, 25);
+        doc.text(descriptionOfWork, 48, 25);
+        doc.text(`Date of Reviewed: ${new Date().toLocaleDateString('en-GB')}`, doc.internal.pageSize.getWidth() - 14, 25, { align: 'right' });
+        doc.text(`Page: 1 of 1`, doc.internal.pageSize.getWidth() - 14, 32, { align: 'right' });
+
+
+        const tableData = sortedPoints.map(p => {
+            const date = p.datetime ? new Date(p.datetime) : null;
+            const formattedDate = date ? `${date.toLocaleDateString('en-GB')} ${date.toLocaleTimeString('en-GB', {hour: '2-digit', minute:'2-digit'})}` : '';
+            return [
+                p.sequence,
+                p.name,
+                p.location,
+                p.isolationType === 'Physical' ? 'X' : '', // PHYSICAL (LOTO/CTRL/NL)
+                '', // Lock closed
+                '', // Lock open
+                '', // Blinded
+                '', // Spade
+                '', // Disconnected
+                '', // Energized
+                p.isolationType === 'Electrical' ? 'X' : '', // De-energized
+                p.deviceType,
+                p.normalPos, // Normal Run Position
+                p.isolatedPos, // Isolation Position
+                formattedDate, // Isolation Date/Time
+                p.lockNo, // Isolation Tag/Lock No.
+                p.pic, // Isolation PIC
+                '', // De-iso Position
+                '', // De-iso Date/Time
+                '', // De-iso Tag/Lock No.
+                ''  // De-iso PIC
+            ];
+        });
+
+        doc.autoTable({
+            head: [
+                [
+                    { content: 'Isolation Points', colSpan: 3, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                    { content: 'Isolation Device Type', colSpan: 8, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                    { content: 'Normal Run', colSpan: 1, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                    { content: 'Isolation', colSpan: 4, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } },
+                    { content: 'De-Isolation', colSpan: 4, styles: { halign: 'center', fillColor: [255, 255, 255], textColor: 0, lineColor: 0, lineWidth: 0.1 } }
+                ],
+                [
+                    { content: 'NO', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Equipment Name/Tag', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Location', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'PHYSICAL (LOTO/CTRL/NL)', colSpan: 6, styles: { halign: 'center' } },
+                    { content: 'Electrical', colSpan: 2, styles: { halign: 'center' } },
+                    { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Date/Time', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Tag No./Lock No.', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'PIC', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Position', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Date/Time', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'Tag No./Lock No.', rowSpan: 2, styles: { valign: 'middle' } },
+                    { content: 'PIC', rowSpan: 2, styles: { valign: 'middle' } }
+                ],
+                ['Lock closed', 'Lock open', 'Blinded', 'Spade', 'Disconnected', 'Energized', 'De-energized', 'Device Type']
+            ],
+            body: tableData,
+            margin: { top: 40, right: 10, bottom: 10, left: 10 },
+            theme: 'grid',
+            headStyles: { fillColor: [255, 255, 255], textColor: 0, fontSize: 6, lineColor: 0, lineWidth: 0.1, halign: 'center' },
+            styles: { fontSize: 6, cellPadding: 1, overflow: 'linebreak', lineColor: 0, lineWidth: 0.1 },
+            columnStyles: {
+                0: { halign: 'center', cellWidth: 8 }, 1: { cellWidth: 30 }, 2: { cellWidth: 22 },
+                3: { halign: 'center', cellWidth: 10 }, 4: { halign: 'center', cellWidth: 10 },
+                5: { halign: 'center', cellWidth: 10 }, 6: { halign: 'center', cellWidth: 10 },
+                7: { halign: 'center', cellWidth: 10 }, 8: { halign: 'center', cellWidth: 10 },
+                9: { halign: 'center', cellWidth: 10 }, 10: { halign: 'center', cellWidth: 10 },
+                11: { cellWidth: 15 }, 12: { cellWidth: 15 }, 13: { cellWidth: 18 }, 14: { cellWidth: 18 }, 15: { cellWidth: 15 },
+                16: { cellWidth: 15 }, 17: { cellWidth: 18 }, 18: { cellWidth: 18 }, 19: { cellWidth: 15 }
+            }
+        });
+
+        doc.save(`${activeProjectName}-LOTO-Report.pdf`);
+        
+        exportProject(activeProjectName);
+    });
+});
+</script>
 </body>
 </html>
